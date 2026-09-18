@@ -33,7 +33,7 @@ from _common import (  # noqa: E402
     estimate_lines, family_layouts, format_timecode, info, layout_family, limits,
     load_project, ok, parse_chapter_file, read_json, step, talk_minutes_range,
     target_slides,
-    tone_directive, tone_key, videos, visual_len, warn, write_json,
+    tone_directive, tone_key, tone_preset, videos, visual_len, warn, write_json,
 )
 
 # 版面 index（config/fh_template_spec.json）
@@ -65,6 +65,9 @@ def main() -> int:
         die("沒有可用的章節資料。請先跑 Stage 2–4。")
 
     step(f"Stage 5 藍圖生成（{len(chapters)} 章）")
+    fam = LAYOUT_FAMILIES[layout_family()]
+    info(f"內頁色系：{fam['label']}（內頁{layout_family()} / {layout_family()}-1）"
+         f"　語氣：{tone_preset().get('label', tone_key())}")
 
     groups = group_chapters(chapters)
     if len(groups) != len(chapters):
