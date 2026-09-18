@@ -62,16 +62,27 @@ deck.json 的寫法：
 書裡沒有、但 Stage 4 查到的外部資料，優先抓**那個機構自己畫的圖**，
 不要拿它的數字自己重畫。聯準會的圖長得像聯準會，可信度是附帶的。
 
+**做法是兩段式**：Stage 4 查證時只記網址（`figure_candidates` 的 `figure_url`），
+之後在有對外連線的機器上一道指令全部抓回來。
+
 ```bash
-python tools/fetch_source_figure.py --fred DGS10 --start 2015-01-01 --out work/09_srcfigs/dgs10.png
-python tools/fetch_source_figure.py --url "https://…/chart.png" --out work/09_srcfigs/xxx.png
+python tools/fetch_source_figure.py --from-evidence          # 批次，推薦
+python tools/fetch_source_figure.py --fred DGS10 --start 2015-01-01 \
+    --out work/09_srcfigs/dgs10.png                          # 單張，FRED
+python tools/fetch_source_figure.py --url "https://…/chart.png" \
+    --out work/09_srcfigs/xxx.png                            # 單張，其他機構
 ```
+
+批次模式會寫 `work/09_srcfigs/manifest.json`，已經抓到的不會重抓，
+所以在雲端跑一次（多半全部失敗）、回本機再跑一次，就會補齊。
 
 - FRED 有官方的出圖端點，指定序列代號就好（`--fred` 可給多個，會畫在同一張）
 - 其他機構就找頁面上那張圖的實際網址
 - **抓不到就往下一級走，不要硬拗**。有些機構的圖是 JS 畫的，沒有靜態檔
-- 雲端環境（Cowork / Claude Code on the web）的出口被 proxy 擋住，這一步只有在
-  使用者自己的機器上跑得動
+- **雲端環境（Cowork / Claude Code on the web）的出口是白名單**，機構網站幾乎
+  全被擋（實測 FRED、Google、Wikimedia 都連不出去，只有 github / pypi 通）。
+  這不是 bug 也不能繞，是組織的 egress policy。
+  所以流程才拆成「雲端記網址、本機抓圖」兩段
 
 抓回來之後同樣用 `image` 欄位掛上去，`sources` 寫機構全稱與日期。
 

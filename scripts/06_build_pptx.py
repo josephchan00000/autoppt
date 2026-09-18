@@ -79,10 +79,13 @@ def set_ea_font(run, name: str = EA_FONT, latin: str = LATIN_FONT) -> None:
         el.set("typeface", name)
 
 
-def set_ph(slide, idx: int, text, size_pt: int | None = None, color: str | None = None):
+def set_ph(slide, idx: int, text, size_pt: int | None = None, color: str | None = None,
+           middle: bool = False, space_after_pt: int | None = None):
     """依 placeholder idx 填字，並強制設定中文字型。
 
     text 可以是字串，或 [{"level": 0, "text": "..."}] 這種段落陣列。
+    middle=True 會垂直置中——內文條數少的時候，靠上對齊會在下半頁留一片空白，
+    看起來像沒寫完；置中之後即使只有五成滿也像是刻意排的。
     """
     try:
         ph = slide.placeholders[idx]
@@ -92,6 +95,8 @@ def set_ph(slide, idx: int, text, size_pt: int | None = None, color: str | None 
 
     tf = ph.text_frame
     tf.clear()
+    if middle:
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
     lines = text if isinstance(text, list) else [{"level": 0, "text": text}]
     lines = [ln for ln in lines if (ln.get("text") or "").strip()]
     if not lines:
@@ -100,6 +105,8 @@ def set_ph(slide, idx: int, text, size_pt: int | None = None, color: str | None 
     for i, ln in enumerate(lines):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.level = int(ln.get("level", 0))
+        if space_after_pt is not None and i < len(lines) - 1:
+            p.space_after = Pt(space_after_pt)
         r = p.add_run()
         r.text = ln["text"]
         if size_pt:
@@ -167,11 +174,20 @@ def remove_empty_placeholders(slide) -> None:
 # ==========================================================================
 # 溢排保護（規劃書 §8.4）
 # ==========================================================================
+def _line_capacity(size_pt: int, max_lines_at_24: int) -> int:
+    """內文框固定高，字級越大能塞的行數越少。8 行是 24pt 的基準。"""
+    return max(2, int(max_lines_at_24 * 24 / size_pt))
+
+
 def fit_body(body: list[dict]) -> tuple[list[dict], int, list[dict] | None]:
     """回傳 (body, size_pt, 溢出的下一頁 body or None)。
 
     24pt 中文一行約 18 字，行高約 0.45in，內文 placeholder 高 4,537,075 EMU
-    → 最多約 8 行。超過就：先降到 20pt → 還是超過就拆兩頁。
+    → 最多約 8 行。
+
+    條數少的時候要「往上」放大：3 條短要點用 24pt 只填得滿六成版面，
+    看起來像沒寫完。母片的內文原生就是 32pt，先試 32 再試 28，
+    塞得下就用大的。塞不下才往下降（20pt），再不行就拆兩頁。
     絕不允許自動縮到 16pt 以下。
     """
     lim = limits()
@@ -182,8 +198,10 @@ def fit_body(body: list[dict]) -> tuple[list[dict], int, list[dict] | None]:
     if not body:
         return body, base_pt, None
 
-    if estimate_lines(body, base_pt) <= max_lines:
-        return body, base_pt, None
+    # 由大到小找第一個塞得下的字級（32 是母片 body_lvl1 的原生大小）
+    for pt in (32, 28, base_pt):
+        if estimate_lines(body, pt) <= _line_capacity(pt, max_lines):
+            return body, pt, None
 
     if down_pt >= floor_pt and estimate_lines(body, down_pt) <= max_lines:
         return body, down_pt, None
@@ -940,7 +958,10 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
         if has_sub and subtitle:
             set_ph(s, 14, subtitle, size_pt=lay["14"].get("size_pt", 24),
                    color=lay["14"].get("color"))
-        set_ph(s, body_idx, cur, size_pt=size_pt)
+        # 條數少時把段距拉開，配合垂直置中把版面撐開
+        n_l1 = sum(1 for b in cur if int(b.get("level", 0)) == 0)
+        gap = 16 if n_l1 <= 3 else (10 if n_l1 <= 4 else None)
+        set_ph(s, body_idx, cur, size_pt=size_pt, middle=True, space_after_pt=gap)
 
         remove_empty_placeholders(s)
         add_source_line(s, sources)

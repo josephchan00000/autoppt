@@ -54,6 +54,16 @@
       "source_url": ""
     }
   ],
+  "figure_candidates": [
+    {
+      "title": "這張圖在講什麼（會變成投影片主標的素材）",
+      "figure_url": "https://…/chart.png",
+      "page_url": "https://…（那張圖所在的頁面）",
+      "source_title": "機構全稱",
+      "as_of": "2026-03",
+      "why": "為什麼要用機構的原圖而不是自己畫（30 字內）"
+    }
+  ],
   "video_candidates": [
     {
       "title": "影片標題",
@@ -66,6 +76,30 @@
   ]
 }
 ```
+
+## 機構原圖（`figure_candidates`）
+
+查證的時候，如果那個機構自己有畫這張圖，**把圖檔網址記下來**。
+聯準會的圖長得像聯準會，可信度是附帶的——比拿它的數字自己重畫有說服力得多
+（見 `prompts/visuals.md` 第 2 級）。
+
+- `figure_url` 要是**圖檔本身**的網址（.png / .svg / .jpg），不是圖表所在的頁面；
+  頁面網址另外放 `page_url`
+- 在瀏覽器對圖按右鍵複製圖片網址，或看頁面原始碼的 `<img src>`
+- **很多機構的圖是 JS 畫的，沒有靜態檔**——那就不要放，留空陣列，
+  改走 visuals.md 第 3 級（自己畫成流程圖／對照表）
+- FRED 有官方出圖端點，直接記
+  `https://fred.stlouisfed.org/graph/fredgraph.png?id=<序列代號>`
+- 不確定抓不抓得到沒關係，**先記下來**，之後批次抓的時候會逐一回報成敗
+
+記完之後，在**有對外連線的機器上**跑一次就會全部抓回來：
+
+```bash
+python tools/fetch_source_figure.py --from-evidence
+```
+
+（雲端環境的 egress policy 多半擋掉機構網站，抓不到的會列出來，
+換到自己的電腦再跑一次即可，已經抓到的不會重抓。）
 
 ## 影片建議（`video_candidates`，每章 1–2 支）
 

@@ -404,6 +404,36 @@ def validate_evidence(path: Path, ch_id: str) -> list[str]:
                     errors.append(f"{w}.data[{j}].value 必須是數字（目前 {pt.get('value')!r}）")
         _check_url(c, w, errors)
 
+    # --- figure_candidates（選填，有就要完整）---
+    fcs = d.get("figure_candidates")
+    if fcs is None:
+        fcs = []                                   # 舊檔沒有這個欄位，視為空
+    elif not isinstance(fcs, list):
+        errors.append("figure_candidates 必須是陣列（沒有就給 []）")
+        fcs = []
+    for i, f in enumerate(fcs):
+        w = f"{ch_id}.figure_candidates[{i}]"
+        check_keys(f, ["title", "figure_url", "source_title", "as_of"], w, errors)
+        if not isinstance(f, dict):
+            continue
+        nonempty_str(f, "title", w, errors)
+        nonempty_str(f, "source_title", w, errors)
+        url = (f.get("figure_url") or "").strip()
+        if not url:
+            errors.append(f"{w}.figure_url 空白 —— 沒有靜態圖檔就不要放這一筆")
+        elif PLACEHOLDER_RE.search(url):
+            errors.append(f"{w}.figure_url 含佔位符，疑似編造：{url}")
+        else:
+            pu = urlparse(url)
+            if pu.scheme not in ("http", "https") or not pu.netloc:
+                errors.append(f"{w}.figure_url 不是合法網址：{url}")
+            elif not any(pu.path.lower().endswith(e)
+                         for e in (".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp")) \
+                    and "fredgraph" not in url:
+                errors.append(f"{w}.figure_url 看起來是頁面網址不是圖檔：{url}"
+                              "（圖檔網址放 figure_url，頁面網址放 page_url）")
+        _check_as_of(f, w, errors)
+
     # --- video_candidates（選填，有就要完整）---
     vcs = d.get("video_candidates")
     if vcs is None:

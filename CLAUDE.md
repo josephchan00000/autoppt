@@ -69,14 +69,21 @@ python scripts/04_research.py --next
 不可以自己拼湊）。查不到就少寫一筆。每章至少 1 筆 `taiwan_lens`。
 書中過期的數據一定要標 `outdated` 並附最新值。
 
-順便每章找 1–2 支相關影片放進 `video_candidates`（作者訪談、講座、新聞片段），
-使用者會自己挑要不要放進簡報。
+順便每章找兩種東西：
+- `figure_candidates`：機構自己畫的那張圖的**圖檔網址**（不是頁面網址）。
+  只記不抓——雲端環境的對外連線是白名單，機構網站幾乎全被擋。
+- `video_candidates`：1–2 支相關影片（作者訪談、講座、新聞片段），使用者自己挑。
 
 全部跑完：
 ```bash
-python scripts/08_qa.py --check-sources    # URL 全檢
-python scripts/04_research.py --videos     # 列出所有影片建議給使用者挑
+python scripts/08_qa.py --check-sources             # URL 全檢
+python scripts/04_research.py --videos              # 列出影片建議給使用者挑
+python tools/fetch_source_figure.py --from-evidence # 批次抓機構原圖
 ```
+
+最後那行需要對外連線。在雲端跑會整批失敗（egress policy 擋掉機構網站），
+**這不是錯誤**——叫使用者把資料夾帶回自己的電腦跑同一行就會補齊，
+已經抓到的不會重抓。
 
 ### Stage 5 藍圖 + 文案潤飾 ← 潤飾是你的工作
 ```bash
