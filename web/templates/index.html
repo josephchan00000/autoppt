@@ -235,6 +235,7 @@
   <div class="card">
     <h2><b>5</b>現場要播的影片</h2>
     <div id="vids"></div>
+    <div id="vcands"></div>
     <div class="row" style="margin-top:4px">
       <button class="btn sm" id="addVid">＋ 加一支影片</button>
       <span class="note" style="margin:0">每支會生成一張影片頁（標題 + QR code + 時間碼），
@@ -616,6 +617,34 @@ function renderPipeline(){
     else { cmd = '兩段都完成了，可以往下產藍圖。'; box.classList.add('ok'); }
     $('#todoCmd').textContent = cmd;
   }
+
+  /* --- Stage 4 找到的影片建議 --- */
+  const vc = PL.video_candidates || [];
+  $('#vcands').innerHTML = vc.length ? `
+    <div class="note" style="margin:0 0 9px">
+      研究階段順便找到的影片（${vc.length} 支）——覺得可以就按「用這支」，會自動填進上面
+    </div>
+    <div class="files" style="margin-bottom:14px">` + vc.map(v => `
+      <div class="file" style="align-items:flex-start">
+        <div class="nm">
+          <div style="font-weight:600">${esc(v.title)}</div>
+          <div style="color:var(--gray); font-size:12.5px; margin-top:3px">
+            ${esc(v.ch_id)}${v.channel?' · '+esc(v.channel):''} · 建議 ${esc(v.start)}–${esc(v.end)}
+          </div>
+          <div style="color:var(--gray); font-size:12.5px; margin-top:3px">${esc(v.why)}</div>
+        </div>
+        ${v.added
+          ? '<span class="badge b-done" style="margin:0">已加入</span>'
+          : `<button class="btn sm" data-vc="${esc(v.ch_id)}:${v.idx}">用這支</button>`}
+      </div>`).join('') + `</div>` : '';
+
+  document.querySelectorAll('[data-vc]').forEach(b => b.onclick = async () => {
+    const [ch_id, idx] = b.dataset.vc.split(':');
+    b.disabled = true; b.innerHTML = '<span class="spin"></span>';
+    const j = await post('/api/accept-video', {ch_id, idx:+idx});
+    if(j.settings){ S = j.settings; fillForm(); }
+    if(j.pipeline){ PL = j.pipeline; renderPipeline(); }
+  });
 
   /* --- 產出 --- */
   const d = PL.deck;

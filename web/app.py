@@ -202,8 +202,29 @@ def pipeline_state() -> dict:
               "pass": txt.count("| **PASS** |"),
               "mtime": int(qa_file.stat().st_mtime)}
 
+    # Stage 4 順便找到的影片建議，讓使用者直接在第 5 段挑
+    chosen = {(v.get("url") or "").strip()
+              for v in (load_project().get("videos") or []) if isinstance(v, dict)}
+    vcands = []
+    for r in rows:
+        ep = EVIDENCE / f"{r['ch_id']}.json"
+        if not ep.exists():
+            continue
+        try:
+            for i, v in enumerate(read_json(ep).get("video_candidates") or []):
+                if isinstance(v, dict) and (v.get("url") or "").strip():
+                    vcands.append({"ch_id": r["ch_id"], "idx": i,
+                                   "title": v.get("title", ""), "url": v["url"].strip(),
+                                   "channel": v.get("channel", ""), "why": v.get("why", ""),
+                                   "start": v.get("suggested_start", ""),
+                                   "end": v.get("suggested_end", ""),
+                                   "added": v["url"].strip() in chosen})
+        except Exception:                              # noqa: BLE001
+            pass
+
     return {
         "chapters": rows,
+        "video_candidates": vcands,
         "digest_done": sum(1 for r in rows if r["digest"] == "done"),
         "evidence_done": sum(1 for r in rows if r["evidence"] == "done"),
         "deck": deck,
@@ -522,6 +543,16 @@ def api_run(stage: str):
     script, args = RUNNABLE[stage]
     step = run_stage(script, *args)
     return jsonify({"ok": step["ok"], "steps": [step], "pipeline": pipeline_state()})
+
+
+
+@app.post("/api/accept-video")
+def api_accept_video():
+    body = request.json or {}
+    ref = f"{body.get('ch_id', '')}:{body.get('idx', '')}"
+    step = run_stage("04_research.py", "--accept-video", ref)
+    return jsonify({"ok": step["ok"], "steps": [step],
+                    "settings": settings_payload(), "pipeline": pipeline_state()})
 
 
 @app.get("/api/download/<path:name>")

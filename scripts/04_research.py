@@ -23,9 +23,9 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    DIGEST, EVIDENCE, PROMPTS, chapter_files, check_keys, die, ensure_dirs, fail,
-    info, load_project, nonempty_str, ok, parse_chapter_file, read_json, step,
-    visual_len, warn,
+    DIGEST, EVIDENCE, PROJECT_FILE, PROMPTS, chapter_files, check_keys, die,
+    ensure_dirs, fail, format_timecode, info, load_project, nonempty_str, ok,
+    parse_chapter_file, parse_timecode, read_json, step, visual_len, warn,
 )
 
 PROMPT_FILE = PROMPTS / "research.md"
@@ -46,6 +46,10 @@ def main() -> int:
     g.add_argument("--prompt", metavar="CH_ID", help="印出指定章節的研究提示詞")
     g.add_argument("--validate", metavar="CH_ID", help="驗證指定章節，all = 全部")
     g.add_argument("--status", action="store_true", help="顯示各章進度")
+    g.add_argument("--videos", action="store_true",
+                   help="列出所有章節找到的影片建議，讓使用者挑")
+    g.add_argument("--accept-video", metavar="CH_ID:N",
+                   help="把某章的第 N 支影片加進 config/project.yaml 的 videos[]，如 ch03:0")
     args = ap.parse_args()
 
     ensure_dirs()
@@ -55,6 +59,10 @@ def main() -> int:
 
     if args.status:
         return show_status(ids)
+    if args.videos:
+        return list_videos(ids)
+    if args.accept_video:
+        return accept_video(args.accept_video)
     if args.next:
         return emit_next(ids)
     if args.prompt:
@@ -198,6 +206,107 @@ def run_validate(target: str, ids: list[str]) -> int:
     return 0
 
 
+
+# ==========================================================================
+# 影片建議
+# ==========================================================================
+def _candidates(ids: list[str]) -> list[tuple[str, int, dict]]:
+    out = []
+    for ch_id in ids:
+        p = ev_path(ch_id)
+        if not p.exists():
+            continue
+        try:
+            d = read_json(p)
+        except Exception:                              # noqa: BLE001
+            continue
+        for i, v in enumerate(d.get("video_candidates") or []):
+            if isinstance(v, dict) and (v.get("url") or "").strip():
+                out.append((ch_id, i, v))
+    return out
+
+
+def list_videos(ids: list[str]) -> int:
+    cands = _candidates(ids)
+    step(f"影片建議（{len(cands)} 支）")
+    if not cands:
+        info("還沒有影片建議。跑完 Stage 4 之後再看，或該章本來就沒找到合適的。")
+        return 0
+
+    chosen = {(v.get("url") or "").strip() for v in (load_project().get("videos") or [])
+              if isinstance(v, dict)}
+    for ch_id, i, v in cands:
+        ss, ee = parse_timecode(v.get("suggested_start")), parse_timecode(v.get("suggested_end"))
+        mark = "  ← 已加入" if (v.get("url") or "").strip() in chosen else ""
+        print()
+        print(f"  {ch_id}:{i}  {v.get('title', '')}{mark}")
+        print(f"      {v.get('channel', '')}　建議片段 "
+              f"{v.get('suggested_start', '')}–{v.get('suggested_end', '')}"
+              f"（{format_timecode(max(0, ee - ss))}）")
+        print(f"      {v.get('why', '')}")
+        print(f"      {v.get('url', '')}")
+    print()
+    info("要用哪一支就跑：python scripts/04_research.py --accept-video ch03:0")
+    info("（或直接在 make web 的第 5 段手動填）")
+    return 0
+
+
+def accept_video(ref: str) -> int:
+    """把 chNN:i 這支影片寫進 config/project.yaml 的 videos[]。"""
+    if ":" not in ref:
+        die("格式是 chNN:N，例如 ch03:0")
+    ch_id, _, idx = ref.partition(":")
+    try:
+        idx = int(idx)
+    except ValueError:
+        die("格式是 chNN:N，例如 ch03:0")
+
+    p = ev_path(ch_id)
+    if not p.exists():
+        die(f"{ch_id} 還沒有 evidence（{p}）")
+    cands = read_json(p).get("video_candidates") or []
+    if not (0 <= idx < len(cands)):
+        die(f"{ch_id} 只有 {len(cands)} 支影片建議，沒有第 {idx} 支")
+    v = cands[idx]
+
+    from ruamel.yaml import YAML
+    from ruamel.yaml.scalarstring import DoubleQuotedScalarString as Q
+
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.width = 4096
+    cfg = yaml.load(PROJECT_FILE.read_text(encoding="utf-8")) or {}
+    vids = cfg.get("videos")
+    if not isinstance(vids, list):
+        vids = []
+
+    url = (v.get("url") or "").strip()
+    if any(isinstance(x, dict) and (x.get("url") or "").strip() == url for x in vids):
+        warn(f"這支影片已經在 videos[] 裡了：{v.get('title', '')}")
+        return 0
+
+    vids.append({
+        "title": Q((v.get("title") or "").strip() or "參考影片"),
+        "url": Q(url),
+        # 時間碼一定要加引號，YAML 1.1 會把 1:30 當六十進位解析成 90
+        "start": Q((v.get("suggested_start") or "0:00").strip()),
+        "end": Q((v.get("suggested_end") or "3:00").strip()),
+        "after_ch": Q(ch_id),
+        "note": Q((v.get("why") or "").strip()),
+    })
+    cfg["videos"] = vids
+
+    from io import StringIO
+
+    buf = StringIO()
+    yaml.dump(cfg, buf)
+    PROJECT_FILE.write_text(buf.getvalue(), encoding="utf-8")
+
+    ok(f"已加入：{v.get('title', '')}（放在 {ch_id} 之後）")
+    info("下一步：重跑 python scripts/05_outline.py --force 讓影片頁進藍圖")
+    return 0
+
+
 # ==========================================================================
 # Schema + 硬性規則驗證（規劃書 §6）
 # ==========================================================================
@@ -294,6 +403,37 @@ def validate_evidence(path: Path, ch_id: str) -> list[str]:
                 elif not isinstance(pt.get("value"), (int, float)):
                     errors.append(f"{w}.data[{j}].value 必須是數字（目前 {pt.get('value')!r}）")
         _check_url(c, w, errors)
+
+    # --- video_candidates（選填，有就要完整）---
+    vcs = d.get("video_candidates")
+    if vcs is None:
+        vcs = []                                   # 舊檔沒有這個欄位，視為空
+    elif not isinstance(vcs, list):
+        errors.append("video_candidates 必須是陣列（沒有就給 []）")
+        vcs = []
+    for i, v in enumerate(vcs):
+        w = f"{ch_id}.video_candidates[{i}]"
+        check_keys(v, ["title", "url", "why", "suggested_start", "suggested_end"], w, errors)
+        if not isinstance(v, dict):
+            continue
+        nonempty_str(v, "title", w, errors)
+        nonempty_str(v, "why", w, errors, min_len=8)
+        url = (v.get("url") or "").strip()
+        if not url:
+            errors.append(f"{w}.url 空白 —— 找不到就不要放這一筆")
+        elif PLACEHOLDER_RE.search(url):
+            errors.append(f"{w}.url 含佔位符，疑似編造：{url}")
+        else:
+            pu = urlparse(url)
+            if pu.scheme not in ("http", "https") or not pu.netloc:
+                errors.append(f"{w}.url 不是合法網址：{url}")
+        ss, ee = parse_timecode(v.get("suggested_start")), parse_timecode(v.get("suggested_end"))
+        if ee <= ss:
+            errors.append(f"{w}: suggested_end 要大於 suggested_start"
+                          f"（{v.get('suggested_start')!r} → {v.get('suggested_end')!r}）")
+        elif ee - ss > 600:
+            errors.append(f"{w}: 建議片段 {(ee - ss) // 60} 分鐘太長，"
+                          "分享會現場播 3–5 分鐘就好，挑切題的那一段")
 
     # --- 來源數量下限 ---
     urls = {x.get("source_url") for x in (vs + tls + exts + ccs)

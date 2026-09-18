@@ -53,9 +53,32 @@
       "source_title": "",
       "source_url": ""
     }
+  ],
+  "video_candidates": [
+    {
+      "title": "影片標題",
+      "url": "https://www.youtube.com/watch?v=...",
+      "channel": "頻道／主辦單位",
+      "why": "為什麼這一段值得在分享會播（40 字內）",
+      "suggested_start": "2:15",
+      "suggested_end": "5:40"
+    }
   ]
 }
 ```
+
+## 影片建議（`video_candidates`，每章 1–2 支）
+
+順便找這一章主題相關、**適合在分享會現場播 3–5 分鐘**的影片：
+作者訪談、TED／機構講座、財經媒體的專題片段、監理機關的說明影片。
+
+- `url` 必須是實際搜到的影片頁網址，不要拼湊
+- `suggested_start` / `suggested_end` 用 mm:ss，挑出真正切題的那一段，
+  不要給整支兩小時的演講
+- `why` 要講清楚「這段補了投影片上沒有的什麼」，不是複述影片簡介
+- 找不到合適的就給空陣列，**不要為了湊數放不相關的影片**
+
+使用者會自己從清單裡挑要不要用，挑中的才會變成簡報裡的影片頁。
 
 ## 硬性規則（違反任何一條，這一章要重跑）
 
@@ -81,4 +104,9 @@
 
 寫入 `work/04_evidence/{ch_id}.json`。
 一次只處理一章。寫完後跑 `python scripts/04_research.py --validate {ch_id}`。
-全部章節跑完後，跑 `python scripts/08_qa.py --check-sources` 做一次 URL 全檢。
+全部章節跑完後：
+
+```bash
+python scripts/08_qa.py --check-sources    # URL 全檢
+python scripts/04_research.py --videos     # 列出所有影片建議，讓使用者挑
+```
