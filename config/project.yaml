@@ -4,9 +4,9 @@
 # ===========================================================================
 
 book:
-  title_zh: "（中文書名）"
-  title_en: "（原文書名）"
-  author: "（作者）"
+  title_zh: "時間的價格"
+  title_en: "The Price of Time: The Real Story of Interest"
+  author: "Edward Chancellor"
   publisher_year: "（出版社 / 年）"
 
 presenter:
@@ -15,8 +15,8 @@ presenter:
   date: "2026/XX/XX"
 
 deck:
-  minutes: 60
-  target_slides: [45, 60]          # 留空或 null 就依 minutes 自動推算（約 0.85 頁/分鐘）
+  minutes: 90
+  target_slides:                   # 留空或 null 就依 minutes 自動推算（約 0.85 頁/分鐘）
   pages_per_chapter: [3, 5]        # 每章 3–5 頁內頁（不含章節頁籤）
   language: "zh-TW"
   terminology: "中文為主，專有名詞保留英文原文並於首次出現加註"
@@ -128,31 +128,31 @@ limits:
 
 narration:
   chars_per_minute: 220            # 中文語速基準
-  total_minutes_range: null        # null = 依 deck.minutes 推算（總長 − 5 分鐘 Q&A）
+  total_minutes_range:             # null = 依 deck.minutes 推算（總長 − 5 分鐘 Q&A）
   tolerance: 0.25                  # 每頁字數 = duration_sec × 220/60 ±25%
 
 # 對岸用語黑名單（規劃書 §10 / §7.3）
 banned_terms:
-  - 賦能
-  - 抓手
-  - 閉環
-  - 顆粒度
-  - 打法
-  - 復盤
-  - 落地性
-  - 對標
-  - 底層邏輯
-  - 心智模型化
-  - 強力度
-  - 顆粒
-  - 鏈路
-  - 生態位
-  - 護城河化
-  - 用戶                            # 台灣慣用「使用者／客戶」
-  - 信息                            # 台灣慣用「資訊」
-  - 質量                            # 台灣慣用「品質」
-  - 數據化運營
-  - 視頻
-  - 軟件
-  - 硬件
-  - 網絡                            # 台灣慣用「網路」
+- 賦能
+- 抓手
+- 閉環
+- 顆粒度
+- 打法
+- 復盤
+- 落地性
+- 對標
+- 底層邏輯
+- 心智模型化
+- 強力度
+- 顆粒
+- 鏈路
+- 生態位
+- 護城河化
+- 用戶                              # 台灣慣用「使用者／客戶」
+- 信息                              # 台灣慣用「資訊」
+- 質量                              # 台灣慣用「品質」
+- 數據化運營
+- 視頻
+- 軟件
+- 硬件
+- 網絡                              # 台灣慣用「網路」

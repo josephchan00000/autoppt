@@ -34,6 +34,17 @@ CH_PATTERNS = [
 ]
 CH_RE = [re.compile(p) for p in CH_PATTERNS]
 
+# 常見前置／後置雜頁（--drop-frontmatter 時會從章節清單剔除，但仍用來算頁界）
+FRONT_MATTER_PATTERNS = [
+    r'^\s*(title\s*page|half\s*title|cover|contents|table\s*of\s*contents)\s*$',
+    r'^\s*(about\s+the\s+author|dedication|epigraph|copyright|imprint)\s*$',
+    r'^\s*list\s+of\s+(illustrations|figures|tables|maps|plates)\s*$',
+    r'^\s*(images|plates)\s*$',
+    r'^\s*(acknowledge?ments?|notes|index|select\s+bibliography|bibliography|further\s+reading)\s*$',
+    r'^\s*(書名頁|版權頁|目錄|獻詞|題詞|圖表目錄|插圖目錄|致謝|謝辭|註釋|注釋|索引|參考文獻|延伸閱讀|作者簡介)\s*$',
+]
+FRONT_MATTER_RE = re.compile('|'.join(FRONT_MATTER_PATTERNS), re.IGNORECASE)
+
 MIN_WORDS = 500          # 低於此字數視為拆錯
 MAX_SHARE = 0.25         # 超過全書 25% 視為拆錯
 HEADING_MAX_CHARS = 40   # 啟發式：候選標題行字數上限
@@ -45,6 +56,13 @@ def main() -> int:
     ap.add_argument("--min-chapters", type=int, default=3, help="低於這個章數視為拆章失敗")
     ap.add_argument("--force-regex", action="store_true", help="忽略書籤，強制用正規式掃描")
     ap.add_argument("--force-split", type=int, default=0, help="最後手段：強制均分成 N 章")
+    ap.add_argument("--toc-level", choices=["auto", "1", "2"], default="auto",
+                    help="用書籤拆章時取哪一層：auto=level 1 夠多就用 level 1（預設）；"
+                         "2=用實際章節（PART／篇這類有子節點的容器節點會被展開）")
+    ap.add_argument("--drop-frontmatter", action="store_true",
+                    help="剔除書名頁／獻詞／目錄／致謝／索引等前後置雜頁（仍用來算頁界）")
+    ap.add_argument("--toc-skip", default="",
+                    help="額外要剔除的章節標題正規式（比對書籤標題）")
     args = ap.parse_args()
 
     ensure_dirs()
@@ -64,8 +82,10 @@ def main() -> int:
         method = f"強制均分 {args.force_split} 章"
     else:
         if toc and not args.force_regex:
-            chapters = split_by_toc(pages, toc)
-            method = "書籤／目錄"
+            chapters = split_by_toc(pages, toc, level_mode=args.toc_level,
+                                    drop_frontmatter=args.drop_frontmatter,
+                                    extra_skip=args.toc_skip)
+            method = f"書籤／目錄（level={args.toc_level}）"
             if len(chapters) < args.min_chapters:
                 warn(f"用書籤只切出 {len(chapters)} 章，退回正規式掃描")
                 chapters = []
@@ -95,8 +115,17 @@ def main() -> int:
 # ==========================================================================
 # 策略 1：書籤／目錄
 # ==========================================================================
-def split_by_toc(pages: list[dict], toc: list[dict]) -> list[dict]:
-    """取 level 1–2 的節點，用頁碼區間切。"""
+def split_by_toc(pages: list[dict], toc: list[dict], level_mode: str = "auto",
+                 drop_frontmatter: bool = False, extra_skip: str = "") -> list[dict]:
+    """取 level 1–2 的節點，用頁碼區間切。
+
+    level_mode="auto"：level 1 節點 >= 3 個就只用 level 1（原行為）。
+    level_mode="1"   ：強制只用 level 1。
+    level_mode="2"   ：用實際章節——有子節點的 level 1（PART／篇）會被其 level 2
+                       子節點取代，沒有子節點的 level 1（Introduction／Conclusion
+                       等）保留。
+    剔除的節點仍會參與頁界計算，所以邊界不會因為剔除而跑掉。
+    """
     nodes = [e for e in toc if e.get("level", 1) <= 2 and e.get("page", 0) > 0]
     if not nodes:
         return []
@@ -110,9 +139,23 @@ def split_by_toc(pages: list[dict], toc: list[dict]) -> list[dict]:
         seen_pages.add(n["page"])
         clean.append(n)
 
-    # level 1 若已足夠（>=3），只用 level 1，避免小節被當成章
     l1 = [n for n in clean if n.get("level", 1) == 1]
-    nodes = l1 if len(l1) >= 3 else clean
+    if level_mode == "1":
+        nodes = l1 or clean
+    elif level_mode == "2":
+        # 有 level 2 子節點的 level 1 是容器（PART／篇），丟掉容器本身留子節點
+        nodes = []
+        for i, n in enumerate(clean):
+            if n.get("level", 1) == 1:
+                nxt = clean[i + 1] if i + 1 < len(clean) else None
+                if nxt is not None and nxt.get("level", 1) == 2:
+                    continue          # 容器節點，跳過
+            nodes.append(n)
+        if len(nodes) < 3:
+            nodes = clean
+    else:
+        # level 1 若已足夠（>=3），只用 level 1，避免小節被當成章
+        nodes = l1 if len(l1) >= 3 else clean
 
     last_page = max(p["page"] for p in pages)
     out = []
@@ -123,6 +166,26 @@ def split_by_toc(pages: list[dict], toc: list[dict]) -> list[dict]:
             end = start
         out.append({"title": n["title"], "start": start, "end": end,
                     "text": page_range_text(pages, start, end)})
+
+    # 頁界算完之後才剔除，邊界不受影響
+    skip_res = []
+    if drop_frontmatter:
+        skip_res.append(FRONT_MATTER_RE)
+    if extra_skip:
+        skip_res.append(re.compile(extra_skip, re.IGNORECASE))
+    if skip_res:
+        kept, dropped = [], []
+        for c in out:
+            title = (c["title"] or "").strip()
+            if any(r.search(title) for r in skip_res):
+                dropped.append(title)
+            else:
+                kept.append(c)
+        if dropped:
+            info(f"剔除 {len(dropped)} 個前後置雜頁：" + "、".join(dropped[:8])
+                 + ("…" if len(dropped) > 8 else ""))
+        out = kept
+
     return [c for c in out if c["text"].strip()]
 
 
