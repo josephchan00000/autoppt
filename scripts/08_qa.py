@@ -4,13 +4,14 @@
 
 規劃書 §10 的九項檢查，任何一項 FAIL 就不准交付：
     頁數      45 ≤ total ≤ 60
-    溢排      每頁內文估算行數 ≤ 8；主標 ≤ 18 字；副標 ≤ 28 字
+    溢排      每頁內文估算行數 ≤ 8；主標 ≤ 14 字；副標 ≤ 21 字
     資料來源  每一頁（封面／頁籤／結尾除外）都有 sources，且非空字串
     外部連結  所有 url HTTP 200；死連結列出
     具體性    每頁 body 至少含一個數字／年份／專有名詞；否則標 WARN
     版型純度  每張 slide 的 layout name 必須在模板 11 種之內；無自建 textbox（資料來源行除外）
     字型      掃描所有 run，a:ea typeface 必須是 微軟正黑體
     逐字稿    每頁 narration 字數 = duration_sec × 220/60 ±25%；總時長 50–58 分鐘
+    節奏      連續條列頁 ≤ 2；視覺頁佔比 ≥ 40%
     對岸用語  黑名單掃描
     視覺      LibreOffice 轉 PNG 全頁截圖，輸出到 output/preview/
 
@@ -41,7 +42,14 @@ from _common import (  # noqa: E402
     target_slides, visual_len, warn,
 )
 
-ALLOWED_CUSTOM_SHAPES = {"SourceLine", "ChartTitle", "VideoTitle", "VideoInfo"}
+ALLOWED_CUSTOM_SHAPES = {
+    "SourceLine", "ChartTitle", "VideoTitle", "VideoInfo",
+    # 版面 9 的視覺頁元件（06_build_pptx.py 畫的）
+    "VisualTitle", "VisualText", "QuoteBar", "QuoteText", "QuoteAttrib",
+    "StatValue", "StatLabel", "TimelineAxis", "TimelineDot", "TimelineLabel",
+    "FlowBox", "FlowArrow", "FlowCaption", "FlowLoopLabel",
+    "SplitBox", "SplitHeader", "SplitBody", "SplitCaption",
+}
 EA_EXPECT = "微軟正黑體"
 
 
@@ -119,7 +127,8 @@ def main() -> int:
         step("deck.json 檢查")
         if args.check_deck:
             results += [check_page_count(deck), check_overflow(deck), check_sources(deck),
-                        check_concrete(deck), check_banned_terms(deck)]
+                        check_concrete(deck), check_rhythm(deck),
+                        check_banned_terms(deck)]
         if args.check_narration:
             results.append(check_narration(deck))
         for r in results:
@@ -144,6 +153,7 @@ def main() -> int:
     results.append(check_sources(deck))
     results.append(check_links(collect_urls_from_deck(deck), args.timeout))
     results.append(check_concrete(deck))
+    results.append(check_rhythm(deck))
     results.append(check_layout_purity(pptx))
     results.append(check_fonts(pptx))
     results.append(check_narration(deck))
@@ -180,15 +190,35 @@ def slides_of(deck: dict) -> list[dict]:
 
 # --- 1. 頁數 --------------------------------------------------------------
 def check_page_count(deck: dict) -> Result:
+    """頁數是代理指標，真正的交付門檻是總時長。
+
+    逐字稿寫完之後，每頁要講多久是量得出來的，總時長合格就代表這份簡報
+    講得完——這時頁數超標只是「頁面比較碎」，降為 WARN。
+    逐字稿還沒寫完時沒有別的訊號可用，頁數仍然是 FAIL。
+    """
     lo, hi = target_slides()
-    r = Result("頁數", f"{lo} ≤ total ≤ {hi}")
-    n = len(slides_of(deck))
-    if n < lo:
-        r.fail(f"只有 {n} 頁，低於下限 {lo}")
-    elif n > hi:
-        r.fail(f"共 {n} 頁，高於上限 {hi}")
-    else:
+    slides = slides_of(deck)
+    n = len(slides)
+    r = Result("頁數", f"{lo} ≤ total ≤ {hi}（逐字稿完整且時長合格時降為參考值）")
+
+    narrated = sum(1 for s in slides if (s.get("narration") or "").strip())
+    total_sec = sum(int(s.get("duration_sec", 0)) for s in slides)
+    lo_m, hi_m = talk_minutes_range()
+    time_ok = bool(slides) and narrated == n and lo_m * 60 <= total_sec <= hi_m * 60
+
+    if lo <= n <= hi:
         r.note(f"{n} 頁")
+        return r
+
+    msg = (f"只有 {n} 頁，低於下限 {lo}" if n < lo else f"共 {n} 頁，高於上限 {hi}")
+    if time_ok:
+        r.warn(msg + f"，但逐字稿完整且總時長 {format_timecode(total_sec)} "
+                     f"落在 {lo_m}–{hi_m} 分鐘內，講得完")
+        r.note("頁數偏離多半代表視覺頁比例高（引言頁、大數字頁本來就只有 20 秒），"
+               "不是問題")
+    else:
+        r.fail(msg + ("" if narrated == n else f"（逐字稿只寫了 {narrated}/{n} 頁，"
+                                              "無法用時間判定）"))
     return r
 
 
@@ -196,24 +226,36 @@ def check_page_count(deck: dict) -> Result:
 def check_overflow(deck: dict) -> Result:
     lim = limits()
     max_lines = int(lim.get("max_body_lines", 8))
-    t_max = int(lim.get("title_max_chars", 18))
-    s_max = int(lim.get("subtitle_max_chars", 28))
+    t_max = int(lim.get("title_max_chars", 14))
+    # 圖表頁走版面 9，主標是 32pt textbox（寬 8,208,144 EMU），比內頁1-1 的
+    # 36pt 主標框（寬 6,840,760 EMU）放得下更多字，所以另設一個上限。
+    ct_max = int(lim.get("chart_title_max_chars", 20))
+    s_max = int(lim.get("subtitle_max_chars", 21))
+    # 視覺頁（版面 9）的副標是 18pt textbox，比內頁的 24pt 副標框寬得多
+    cs_max = int(lim.get("chart_subtitle_max_chars", 30))
     b_max = int(lim.get("body_max_chars_per_slide", 160))
     l1_max = int(lim.get("bullet_l1_max_chars", 40))
     max_lv = int(lim.get("max_outline_level", 1))
 
-    r = Result("溢排", f"內文 ≤{max_lines} 行；主標 ≤{t_max} 字；副標 ≤{s_max} 字")
+    r = Result("溢排", f"內文 ≤{max_lines} 行；主標 ≤{t_max} 字"
+                       f"（空白內頁的視覺頁 ≤{ct_max}）；副標 ≤{s_max} 字")
     for s in slides_of(deck):
         sid, kind = s.get("id"), s.get("kind")
         title = s.get("title") or ""
         sub = s.get("subtitle") or ""
         body = s.get("body") or []
 
-        if kind not in ("cover", "divider", "closing", "toc", "video") \
-                and visual_len(title) > t_max:
-            r.fail(f"{sid} 主標 {visual_len(title):.0f} 字 > {t_max}：「{title[:24]}」")
-        if sub and visual_len(sub) > s_max:
-            r.fail(f"{sid} 副標 {visual_len(sub):.0f} 字 > {s_max}：「{sub[:30]}」")
+        # image / table / split 走內頁2-1，主標是母片 36pt 的 placeholder，
+        # 容量與內容頁相同；其餘視覺頁走空白內頁的自建 textbox，放得下比較多字。
+        on6 = any(s.get(k) for k in ("image", "table", "split"))
+        if kind not in ("cover", "divider", "closing", "toc", "video"):
+            cap = ct_max if (kind == "chart" and not on6) else t_max
+            if visual_len(title) > cap:
+                r.fail(f"{sid} 主標 {visual_len(title):.0f} 字 > {cap}：「{title[:24]}」")
+        if sub:
+            scap = cs_max if (kind in ("chart", "cover") and not on6) else s_max
+            if visual_len(sub) > scap:
+                r.fail(f"{sid} 副標 {visual_len(sub):.0f} 字 > {scap}：「{sub[:30]}」")
 
         lines = estimate_lines(body, 24)
         if lines > max_lines:
@@ -494,6 +536,68 @@ def check_narration(deck: dict) -> Result:
     if video_sec:
         r.note(f"其中影片播放 {format_timecode(video_sec)}"
                f"（佔 {video_sec / total_sec:.0%}）")
+    return r
+
+
+
+# --- 10. 節奏（條列頁不要連成一片）-----------------------------------------
+VISUAL_KEYS = ("image", "flow", "timeline", "table", "split", "quote", "stat", "chart")
+
+
+def _is_bullet_slide(s: dict) -> bool:
+    """純文字條列頁：有 body、且沒有任何視覺元素。"""
+    if s.get("kind") != "content":
+        return False
+    if any(s.get(k) for k in VISUAL_KEYS):
+        return False
+    return bool(s.get("body"))
+
+
+def _is_visual_slide(s: dict) -> bool:
+    return any(s.get(k) for k in VISUAL_KEYS)
+
+
+def check_rhythm(deck: dict) -> Result:
+    lim = limits()
+    max_run = int(lim.get("max_consecutive_bullet_slides", 2))
+    min_ratio = float(lim.get("visual_slide_ratio_min", 0.40))
+
+    r = Result("節奏", f"連續條列頁 ≤ {max_run}；視覺頁佔比 ≥ {min_ratio:.0%}")
+    slides = slides_of(deck)
+    if not slides:
+        r.skip("沒有投影片")
+        return r
+
+    # 連續條列
+    run, run_start = 0, None
+    worst = []
+    for s in slides:
+        if _is_bullet_slide(s):
+            run += 1
+            if run == 1:
+                run_start = s.get("id")
+            if run == max_run + 1:
+                worst.append((run_start, run))
+            elif run > max_run + 1 and worst:
+                worst[-1] = (run_start, run)
+        else:
+            run, run_start = 0, None
+    for sid, n in worst:
+        r.fail(f"{sid} 起連續 {n} 頁條列（上限 {max_run}），"
+               "中間插一頁視覺頁、引言頁或大數字頁")
+
+    # 視覺頁比例
+    n_vis = sum(1 for s in slides if _is_visual_slide(s))
+    ratio = n_vis / len(slides)
+    if ratio < min_ratio:
+        r.warn(f"視覺頁只佔 {ratio:.0%}（{n_vis}/{len(slides)}），低於 {min_ratio:.0%}。"
+               "把「是一個機制／一組對照／一條時間線」的條列頁改畫成 "
+               "flow / table / split / timeline")
+    else:
+        r.note(f"視覺頁 {n_vis}/{len(slides)}（{ratio:.0%}）")
+
+    n_bullet = sum(1 for s in slides if _is_bullet_slide(s))
+    r.note(f"純條列頁 {n_bullet}/{len(slides)}（{n_bullet / len(slides):.0%}）")
     return r
 
 

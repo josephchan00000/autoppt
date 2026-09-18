@@ -15,7 +15,7 @@ presenter:
   date: "2026/XX/XX"
 
 deck:
-  minutes: 90
+  minutes: 60
   target_slides:                   # 留空或 null 就依 minutes 自動推算（約 0.85 頁/分鐘）
   pages_per_chapter: [3, 5]        # 每章 3–5 頁內頁（不含章節頁籤）
   language: "zh-TW"
@@ -115,12 +115,26 @@ research:
 
 # --- 以下為文案與品管的硬性門檻（規劃書 §7.3 / §8.4 / §10）-----------------
 limits:
-  title_max_chars: 18              # 主標 ≤ 18 字
-  subtitle_max_chars: 28           # 副標 ≤ 28 字
+  # 主標／副標的上限是量出來的，不是規格書上的數字：
+  # 內頁1-1 主標框 36pt 單行、寬 6,840,760 EMU，約放得下 14 個全形字，
+  # 超過會折成兩行壓到副標上；副標 24pt 同理約 21 字。
+  title_max_chars: 14
+  subtitle_max_chars: 21
+  # 視覺頁走版面 9，標題是自建 textbox（32pt / 18pt，寬 8,208,144 EMU），
+  # 比內頁的 placeholder 寬，所以另設一組上限。
+  chart_title_max_chars: 20
+  chart_subtitle_max_chars: 30
   bullet_l1_max_chars: 40          # 第一層要點 ≤ 40 字
   bullet_l2_max_chars: 60          # 第二層補充 ≤ 60 字
   body_max_chars_per_slide: 160    # 每頁內文總字數 ≤ 160 字
-  bullets_l1_range: [3, 5]         # 每頁第一層要點 3–5 條
+  bullets_l1_range: [2, 3]         # 每頁第一層要點 2–3 條（原本 3–5，實跑後發現
+                                   # 4–5 條會讓整份簡報變成一頁接一頁的條列）
+
+  # --- 以下三條是「不要變成純條列簡報」的防線 ---------------------------
+  # 一份好的讀書分享，條列頁應該是少數。實跑 84 頁時有 45 頁（54%）是
+  # 長得一模一樣的條列頁，每頁都沒超字數上限，但整份看起來就是很悶。
+  max_consecutive_bullet_slides: 2   # 最多連續 2 頁條列，第 3 頁必須是視覺頁
+  visual_slide_ratio_min: 0.40       # 視覺頁（圖／圖形／引言／大數字）至少佔四成
   max_outline_level: 1             # 層級最多 2 層（level 0/1），不准第 3 層
   max_body_lines: 8                # 24pt 中文估算最多 8 行，超過就降級／拆頁
   font_downgrade_pt: 20            # 第一段降級字級

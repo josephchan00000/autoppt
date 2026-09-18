@@ -29,6 +29,8 @@ from pptx import Presentation  # noqa: E402
 from pptx.dml.color import RGBColor  # noqa: E402
 from pptx.oxml.ns import qn  # noqa: E402
 from pptx.util import Emu, Pt  # noqa: E402
+from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR  # noqa: E402
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR  # noqa: E402
 
 EA_FONT = "微軟正黑體"
 LATIN_FONT = "Arial"
@@ -280,22 +282,413 @@ def render_chart(chart: dict, out_png: Path) -> Path | None:
 
 
 
-def render_qr(url: str, out_png: Path) -> Path | None:
-    """影片頁的 QR code。沒裝 qrcode 套件就略過，頁面仍會印出網址。"""
-    try:
-        import qrcode
-    except ImportError:
-        warn("未安裝 qrcode 套件，影片頁不會有 QR code（pip install qrcode）")
-        return None
-    q = qrcode.QRCode(box_size=10, border=2,
-                      error_correction=qrcode.constants.ERROR_CORRECT_M)
-    q.add_data(url)
-    q.make(fit=True)
-    img = q.make_image(fill_color="#262627", back_color="white").convert("RGB")
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    img.save(out_png)
-    return out_png
 
+# ==========================================================================
+# 視覺頁（版面 9）共用元件
+# ==========================================================================
+VIS_TOP = 1450000                      # 空白內頁（版面 9）的視覺區上緣
+LAYOUT6_VIS_TOP = 1628800              # 內頁2-1（版面 6）內容區上緣
+# 這三種視覺走內頁2-1：主標副標用母片原生 placeholder，與內容頁的頁首一致，
+# 而且它們的高度需求不高，少掉的 1.2 吋放得下。
+# flow / timeline 需要完整高度畫圖形，quote / stat 是滿版設計，都留在版面 9。
+LAYOUT6_VISUALS = ("image", "table", "split")
+VIS_LEFT = 467544
+VIS_WIDTH = 8208144
+
+FLOW_FILL = "E9E4DA"                   # 米白（內頁2 色系）
+FLOW_LINE = "B82837"                   # 復華紅
+FLOW_TEXT = "262627"
+FLOW_NOTE = "6B6B6B"
+
+
+def visual_title(slide, title: str, subtitle: str | None) -> None:
+    """版面 9 沒有標題 placeholder，用 textbox 補。"""
+    if not title:
+        return
+    tb = slide.shapes.add_textbox(Emu(VIS_LEFT), Emu(548680), Emu(VIS_WIDTH), Emu(700000))
+    tb.name = "VisualTitle"
+    r = tb.text_frame.paragraphs[0].add_run()
+    r.text = title
+    r.font.size = Pt(32)
+    r.font.color.rgb = RGBColor.from_string(FLOW_TEXT)
+    set_ea_font(r, EA_FONT)
+    if subtitle:
+        p2 = tb.text_frame.add_paragraph()
+        r2 = p2.add_run()
+        r2.text = subtitle
+        r2.font.size = Pt(18)
+        r2.font.color.rgb = RGBColor.from_string("C9A063")
+        set_ea_font(r2, EA_FONT)
+
+
+def place_picture(slide, png: Path, top: int | None = None) -> None:
+    """等比置中放一張圖，高度不超過內容區。"""
+    from PIL import Image
+
+    top = VIS_TOP if top is None else top
+    w_emu = VIS_WIDTH
+    with Image.open(png) as im:
+        ratio = im.height / im.width
+    h_emu = int(w_emu * ratio)
+    max_h = SPEC["content_area_bottom_emu"] - top - 50000
+    if h_emu > max_h:
+        h_emu = max_h
+        w_emu = int(h_emu / ratio)
+    left = int((9144000 - w_emu) / 2)
+    slide.shapes.add_picture(str(png), Emu(left), Emu(top), Emu(w_emu), Emu(h_emu))
+
+
+def _flow_box(slide, left, top, w, h, label, note, accent=False):
+    box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Emu(left), Emu(top), Emu(w), Emu(h))
+    box.name = "FlowBox"
+    box.fill.solid()
+    box.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE if accent else FLOW_FILL)
+    box.line.color.rgb = RGBColor.from_string(FLOW_LINE)
+    box.line.width = Pt(1.25)
+    box.shadow.inherit = False
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    tf.margin_left = tf.margin_right = Emu(64000)
+    tf.margin_top = tf.margin_bottom = Emu(36000)
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    r = p.add_run()
+    r.text = label
+    r.font.size = Pt(16)
+    r.font.bold = True
+    r.font.color.rgb = RGBColor.from_string("FFFFFF" if accent else FLOW_TEXT)
+    set_ea_font(r, EA_FONT)
+    if note:
+        p2 = tf.add_paragraph()
+        p2.alignment = PP_ALIGN.CENTER
+        r2 = p2.add_run()
+        r2.text = note
+        r2.font.size = Pt(11)
+        r2.font.color.rgb = RGBColor.from_string("FFFFFF" if accent else FLOW_NOTE)
+        set_ea_font(r2, EA_FONT)
+    return box
+
+
+def _flow_arrow(slide, x1, y1, x2, y2):
+    c = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Emu(x1), Emu(y1), Emu(x2), Emu(y2))
+    c.name = "FlowArrow"
+    c.line.color.rgb = RGBColor.from_string(FLOW_LINE)
+    c.line.width = Pt(2)
+    # 箭頭：python-pptx 沒有 API，直接寫 XML
+    ln = c.line._get_or_add_ln()
+    tail = ln.makeelement(qn("a:tailEnd"), {"type": "triangle", "w": "med", "len": "med"})
+    ln.append(tail)
+    return c
+
+
+def _txt(slide, left, top, w, h, runs, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE,
+         name="VisualText"):
+    """runs = [(text, size_pt, color_hex, bold), ...]，每個 run 自成一段。"""
+    tb = slide.shapes.add_textbox(Emu(left), Emu(top), Emu(w), Emu(h))
+    tb.name = name
+    tf = tb.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = anchor
+    for i, (text, size, color, bold) in enumerate(runs):
+        par = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        par.alignment = align
+        r = par.add_run()
+        r.text = text
+        r.font.size = Pt(size)
+        r.font.bold = bold
+        r.font.color.rgb = RGBColor.from_string(color)
+        set_ea_font(r, EA_FONT)
+    return tb
+
+
+def draw_quote(slide, q: dict) -> None:
+    """大字引言：整頁就是一句話。"""
+    text = (q.get("text") or "").strip()
+    zh = (q.get("zh") or "").strip()
+    attrib = (q.get("attrib") or "").strip()
+
+    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(VIS_LEFT), Emu(1750000),
+                                 Emu(76200), Emu(2600000))
+    bar.name = "QuoteBar"
+    bar.fill.solid()
+    bar.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE)
+    bar.line.fill.background()
+    bar.shadow.inherit = False
+
+    left = VIS_LEFT + 420000
+    w = VIS_WIDTH - 420000
+    size = 30 if visual_len(text) <= 46 else 24
+    runs = [(text, size, FLOW_TEXT, True)]
+    if zh:
+        runs.append(("", 10, FLOW_TEXT, False))
+        runs.append((zh, 18, FLOW_NOTE, False))
+    _txt(slide, left, 1750000, w, 2600000, runs, align=PP_ALIGN.LEFT, name="QuoteText")
+    if attrib:
+        _txt(slide, left, 4500000, w, 450000,
+             [("— " + attrib, 16, "C9A063", False)], align=PP_ALIGN.LEFT,
+             anchor=MSO_ANCHOR.TOP, name="QuoteAttrib")
+
+
+def draw_stat(slide, stat: dict) -> None:
+    """大數字：一頁一個數字。"""
+    value = str(stat.get("value") or "")
+    label = (stat.get("label") or "").strip()
+    note = (stat.get("note") or "").strip()
+    size = 96 if len(value) <= 6 else (72 if len(value) <= 10 else 54)
+    _txt(slide, VIS_LEFT, 1700000, VIS_WIDTH, 1750000,
+         [(value, size, FLOW_LINE, True)], name="StatValue")
+    runs = [(label, 26, FLOW_TEXT, True)]
+    if note:
+        runs.append((note, 16, FLOW_NOTE, False))
+    _txt(slide, VIS_LEFT, 3550000, VIS_WIDTH, 1500000, runs, anchor=MSO_ANCHOR.TOP,
+         name="StatLabel")
+
+
+def draw_table(slide, tbl: dict, top: int | None = None) -> None:
+    """原生表格。columns = [str], rows = [[str, ...]]。"""
+    cols = tbl.get("columns") or []
+    rows = tbl.get("rows") or []
+    if not cols or not rows:
+        return
+    nr, nc = len(rows) + 1, len(cols)
+    top = (VIS_TOP if top is None else top) + 120000
+    height = min(SPEC["content_area_bottom_emu"] - top - 150000, 380000 * nr)
+    shape = slide.shapes.add_table(nr, nc, Emu(VIS_LEFT), Emu(top), Emu(VIS_WIDTH), Emu(height))
+    table = shape.table
+    widths = tbl.get("widths")
+    if widths and len(widths) == nc:
+        total = sum(widths)
+        for i, wgt in enumerate(widths):
+            table.columns[i].width = Emu(int(VIS_WIDTH * wgt / total))
+
+    def _cell(c, text, size, color, bold, fill):
+        c.fill.solid()
+        c.fill.fore_color.rgb = RGBColor.from_string(fill)
+        c.margin_left = c.margin_right = Emu(64000)
+        c.margin_top = c.margin_bottom = Emu(28000)
+        c.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf = c.text_frame
+        tf.word_wrap = True
+        par = tf.paragraphs[0]
+        r = par.add_run()
+        r.text = str(text)
+        r.font.size = Pt(size)
+        r.font.bold = bold
+        r.font.color.rgb = RGBColor.from_string(color)
+        set_ea_font(r, EA_FONT)
+
+    for j, col in enumerate(cols):
+        _cell(table.cell(0, j), col, 14, "FFFFFF", True, FLOW_LINE)
+    for i, row in enumerate(rows, start=1):
+        fill = "FFFFFF" if i % 2 else FLOW_FILL
+        for j in range(nc):
+            val = row[j] if j < len(row) else ""
+            _cell(table.cell(i, j), val, 12, FLOW_TEXT, j == 0, fill)
+
+
+def draw_timeline(slide, tl: dict) -> None:
+    """水平時間軸：上下交錯標註，避免互相擠壓。"""
+    events = tl.get("events") or []
+    if not events:
+        return
+    n = len(events)
+    axis_y = 3500000
+    line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(VIS_LEFT), Emu(axis_y),
+                                  Emu(VIS_WIDTH), Emu(38100))
+    line.name = "TimelineAxis"
+    line.fill.solid()
+    line.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE)
+    line.line.fill.background()
+    line.shadow.inherit = False
+
+    step_x = VIS_WIDTH / max(n - 1, 1) if n > 1 else 0
+    for i, ev in enumerate(events):
+        cx = int(VIS_LEFT + i * step_x)
+        dot = slide.shapes.add_shape(MSO_SHAPE.OVAL, Emu(cx - 76200), Emu(axis_y - 57150),
+                                     Emu(152400), Emu(152400))
+        dot.name = "TimelineDot"
+        dot.fill.solid()
+        dot.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE)
+        dot.line.color.rgb = RGBColor.from_string("FFFFFF")
+        dot.line.width = Pt(1.5)
+        dot.shadow.inherit = False
+
+        box_w = int(min(step_x * 1.5, 1500000)) or 1400000
+        box_left = cx - box_w // 2
+        box_left = max(250000, min(box_left, 9144000 - 250000 - box_w))
+        up = (i % 2 == 0)
+        runs = [(str(ev.get("when", "")), 15, FLOW_LINE, True),
+                (str(ev.get("what", "")), 13, FLOW_TEXT, False)]
+        if ev.get("note"):
+            runs.append((str(ev["note"]), 10, FLOW_NOTE, False))
+        h = 1450000
+        top = axis_y - 120000 - h if up else axis_y + 180000
+        _txt(slide, box_left, top, box_w, h, runs,
+             anchor=MSO_ANCHOR.BOTTOM if up else MSO_ANCHOR.TOP, name="TimelineLabel")
+
+
+def draw_split(slide, sp: dict, caption: list[dict] | None = None,
+               top: int | None = None) -> None:
+    """雙欄對比；caption 畫在兩欄下方。"""
+    gap = 300000
+    col_w = int((VIS_WIDTH - gap) / 2)
+    top = (VIS_TOP if top is None else top) + 150000
+    bottom = SPEC["content_area_bottom_emu"] - 200000
+    cap_lines = [b for b in (caption or []) if (b.get("text") or "").strip()]
+    if cap_lines:
+        bottom -= 250000 + 300000 * len(cap_lines)
+    h = bottom - top
+    for k, side in enumerate(("left", "right")):
+        data = sp.get(side) or {}
+        left = VIS_LEFT + k * (col_w + gap)
+        accent = bool(data.get("accent"))
+        box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Emu(left), Emu(top),
+                                     Emu(col_w), Emu(h))
+        box.name = "SplitBox"
+        box.fill.solid()
+        box.fill.fore_color.rgb = RGBColor.from_string("FFFFFF")
+        box.line.color.rgb = RGBColor.from_string(FLOW_LINE if accent else "BFBFBF")
+        box.line.width = Pt(1.5 if accent else 1)
+        box.shadow.inherit = False
+
+        hdr = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(left + 60000), Emu(top + 60000),
+                                     Emu(col_w - 120000), Emu(430000))
+        hdr.name = "SplitHeader"
+        hdr.fill.solid()
+        hdr.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE if accent else "939396")
+        hdr.line.fill.background()
+        hdr.shadow.inherit = False
+        tf = hdr.text_frame
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        par = tf.paragraphs[0]
+        par.alignment = PP_ALIGN.CENTER
+        r = par.add_run()
+        r.text = data.get("title", "")
+        r.font.size = Pt(17)
+        r.font.bold = True
+        r.font.color.rgb = RGBColor.from_string("FFFFFF")
+        set_ea_font(r, EA_FONT)
+
+        items = data.get("items") or []
+        tb = slide.shapes.add_textbox(Emu(left + 150000), Emu(top + 600000),
+                                      Emu(col_w - 300000), Emu(h - 700000))
+        tb.name = "SplitBody"
+        body = tb.text_frame
+        body.word_wrap = True
+        for i, it in enumerate(items):
+            par = body.paragraphs[0] if i == 0 else body.add_paragraph()
+            par.space_after = Pt(10)
+            r = par.add_run()
+            r.text = "・" + str(it)
+            r.font.size = Pt(14)
+            r.font.color.rgb = RGBColor.from_string(FLOW_TEXT)
+            set_ea_font(r, EA_FONT)
+
+    if cap_lines:
+        tb = slide.shapes.add_textbox(Emu(VIS_LEFT), Emu(top + h + 200000),
+                                      Emu(VIS_WIDTH), Emu(300000 * len(cap_lines)))
+        tb.name = "SplitCaption"
+        tf2 = tb.text_frame
+        tf2.word_wrap = True
+        for i, b in enumerate(cap_lines):
+            par = tf2.paragraphs[0] if i == 0 else tf2.add_paragraph()
+            par.alignment = PP_ALIGN.CENTER
+            r = par.add_run()
+            r.text = b.get("text", "")
+            r.font.size = Pt(14)
+            r.font.bold = True
+            r.font.color.rgb = RGBColor.from_string(FLOW_LINE)
+            set_ea_font(r, EA_FONT)
+
+
+def draw_flow(slide, flow: dict, caption: list[dict] | None = None) -> None:
+    """用原生圖形畫流程圖。
+
+    flow = {"type": "chain"|"loop", "per_row": 3, "loop_label": "...",
+            "nodes": [{"label": "...", "note": "...", "accent": bool}, ...]}
+
+    chain：由左到右，超過 per_row 就換行，第二列改成由右到左（蛇行），
+    換行的箭頭因此是一條乾淨的垂直線，不會斜切過其他方塊。
+    loop：chain 再加一條虛線箭頭回到起點。
+    caption：deck 的 body，畫在流程圖下方（版面 9 沒有內文 placeholder）。
+    """
+    nodes = flow.get("nodes") or []
+    if not nodes:
+        return
+    ftype = (flow.get("type") or "chain").lower()
+    per_row = int(flow.get("per_row") or (len(nodes) if len(nodes) <= 4 else 3))
+    rows = [nodes[i:i + per_row] for i in range(0, len(nodes), per_row)]
+
+    area_top = VIS_TOP + 120000
+    area_bottom = SPEC["content_area_bottom_emu"] - 200000
+    cap_lines = [b for b in (caption or []) if (b.get("text") or "").strip()]
+    if cap_lines:
+        area_bottom -= 300000 + 300000 * len(cap_lines)
+    if ftype == "loop":
+        area_bottom -= 420000            # 留給回頭的虛線箭頭
+
+    gap_y, gap_x = 320000, 300000
+    avail = area_bottom - area_top
+    box_h = int((avail - gap_y * (len(rows) - 1)) / len(rows))
+    box_h = max(760000, min(box_h, 1250000))
+    block_h = box_h * len(rows) + gap_y * (len(rows) - 1)
+    top0 = area_top + max(0, int((avail - block_h) / 2))   # 垂直置中
+
+    placed = []                          # 依「流程順序」記錄，箭頭才接得對
+    for ri, row in enumerate(rows):
+        n = len(row)
+        box_w = int((VIS_WIDTH - gap_x * (n - 1)) / n)
+        top = top0 + ri * (box_h + gap_y)
+        order = range(n) if ri % 2 == 0 else range(n - 1, -1, -1)
+        for k, ci in enumerate(order):
+            node = row[ci]
+            left = VIS_LEFT + ci * (box_w + gap_x)
+            _flow_box(slide, left, top, box_w, box_h,
+                      node.get("label", ""), node.get("note"), bool(node.get("accent")))
+            cur = (left, top, box_w, box_h)
+            if placed:
+                pl, pt, pw, ph = placed[-1]
+                if k == 0 and ri > 0:                     # 換行：垂直往下
+                    _flow_arrow(slide, pl + pw // 2, pt + ph, left + box_w // 2, top)
+                elif left > pl:                           # 同列往右
+                    _flow_arrow(slide, pl + pw, pt + ph // 2, left, top + box_h // 2)
+                else:                                     # 同列往左（蛇行）
+                    _flow_arrow(slide, pl, pt + ph // 2, left + box_w, top + box_h // 2)
+            placed.append(cur)
+
+    bottom_y = top0 + block_h
+
+    if ftype == "loop" and len(placed) >= 2:
+        fl, ft, fw, fh = placed[0]
+        ll, lt, lw, lh = placed[-1]
+        y = bottom_y + 180000
+        _flow_arrow(slide, ll + lw // 2, y, fl + fw // 2, y).line.dash_style = 4
+        tb = slide.shapes.add_textbox(Emu(VIS_LEFT), Emu(y + 40000), Emu(VIS_WIDTH), Emu(280000))
+        tb.name = "FlowLoopLabel"
+        par = tb.text_frame.paragraphs[0]
+        par.alignment = PP_ALIGN.CENTER
+        r = par.add_run()
+        r.text = flow.get("loop_label") or "回到起點，循環自我強化"
+        r.font.size = Pt(12)
+        r.font.color.rgb = RGBColor.from_string(FLOW_LINE)
+        set_ea_font(r, EA_FONT)
+        bottom_y = y + 340000
+
+    if cap_lines:
+        tb = slide.shapes.add_textbox(Emu(VIS_LEFT), Emu(bottom_y + 220000),
+                                      Emu(VIS_WIDTH), Emu(300000 * len(cap_lines)))
+        tb.name = "FlowCaption"
+        tf = tb.text_frame
+        tf.word_wrap = True
+        for i, b in enumerate(cap_lines):
+            par = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+            par.alignment = PP_ALIGN.CENTER
+            r = par.add_run()
+            r.text = b.get("text", "")
+            r.font.size = Pt(14)
+            r.font.color.rgb = RGBColor.from_string(FLOW_NOTE)
+            set_ea_font(r, EA_FONT)
 
 # ==========================================================================
 # 主流程
@@ -470,46 +863,62 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
         set_notes(s, narration)
         return {"count": 1, "split": 0, "charts": 0}
 
-    # ---- 圖表頁（空白內頁 9）----
-    if kind == "chart" and spec.get("chart"):
-        s = add(prs, layout if layout == 9 else 9)
+    # ---- 視覺頁 ----
+    VISUAL_KEYS = ("chart", "image", "flow", "quote", "stat", "table", "timeline", "split")
+    if kind == "chart" and any(spec.get(k) for k in VISUAL_KEYS):
+        # image / table / split 走內頁2-1，主標副標用母片原生 placeholder；
+        # 其餘走空白內頁，標題是自建 textbox。
+        on6 = any(spec.get(k) for k in LAYOUT6_VISUALS)
+        vis_top = LAYOUT6_VIS_TOP if on6 else VIS_TOP
+
+        s = add(prs, 6 if on6 else 9)
         strip_group_shapes(s)            # 放圖表前移除裝飾群組
-        remove_empty_placeholders(s)     # 版面 9 的內容框要讓位給圖
 
-        png = OUTPUT / "charts" / f"{spec.get('id', 'chart')}.png"
-        made = render_chart(spec["chart"], png)
-
-        # 標題：版面 9 沒有標題 placeholder，用 textbox 補
-        if title:
-            tb = s.shapes.add_textbox(Emu(467544), Emu(548680), Emu(8208144), Emu(700000))
-            tb.name = "ChartTitle"
-            r = tb.text_frame.paragraphs[0].add_run()
-            r.text = title
-            r.font.size = Pt(32)
-            r.font.color.rgb = RGBColor.from_string("262627")
-            set_ea_font(r, EA_FONT)
+        if on6:
+            lay = SPEC["layouts"][6]["placeholders"]
+            set_ph(s, 13, title, size_pt=lay["13"].get("size_pt", 36))
             if subtitle:
-                p2 = tb.text_frame.add_paragraph()
-                r2 = p2.add_run()
-                r2.text = subtitle
-                r2.font.size = Pt(18)
-                r2.font.color.rgb = RGBColor.from_string("C9A063")
-                set_ea_font(r2, EA_FONT)
+                set_ph(s, 14, subtitle, size_pt=lay["14"].get("size_pt", 24),
+                       color=lay["14"].get("color"))
+            remove_empty_placeholders(s)   # 內文框讓位給視覺
+        else:
+            remove_empty_placeholders(s)   # 版面 9 的內容框要讓位給圖
+            if not (spec.get("quote") or spec.get("stat")):
+                visual_title(s, title, subtitle)
 
-        if made:
+        if spec.get("quote"):            # 大字引言
+            draw_quote(s, spec["quote"])
             charts += 1
-            from PIL import Image
-
-            w_emu = 8208144
-            with Image.open(made) as im:
-                ratio = im.height / im.width
-            h_emu = int(w_emu * ratio)
-            max_h = SPEC["content_area_bottom_emu"] - 1500000
-            if h_emu > max_h:
-                h_emu = max_h
-                w_emu = int(h_emu / ratio)
-            left = int((9144000 - w_emu) / 2)
-            s.shapes.add_picture(str(made), Emu(left), Emu(1450000), Emu(w_emu), Emu(h_emu))
+        elif spec.get("stat"):           # 大數字
+            draw_stat(s, spec["stat"])
+            charts += 1
+        elif spec.get("table"):          # 原生表格（書中值 → 最新值）
+            draw_table(s, spec["table"], top=vis_top)
+            charts += 1
+        elif spec.get("timeline"):       # 時間軸
+            draw_timeline(s, spec["timeline"])
+            charts += 1
+        elif spec.get("split"):          # 雙欄對比
+            draw_split(s, spec["split"], spec.get("body"), top=vis_top)
+            charts += 1
+        elif spec.get("image"):          # 書中原圖（截圖）
+            src = Path(spec["image"]["path"])
+            if not src.is_absolute():
+                src = Path(__file__).resolve().parent.parent / src
+            if src.exists():
+                place_picture(s, src, top=vis_top)
+                charts += 1
+            else:
+                warn(f"{spec.get('id')} 找不到圖片 {src}")
+        elif spec.get("flow"):           # 原生圖形畫的流程圖
+            draw_flow(s, spec["flow"], spec.get("body"))
+            charts += 1
+        else:                            # 由資料生成的圖表
+            png = OUTPUT / "charts" / f"{spec.get('id', 'chart')}.png"
+            made = render_chart(spec["chart"], png)
+            if made:
+                place_picture(s, made)
+                charts += 1
 
         add_source_line(s, sources)
         set_notes(s, narration)

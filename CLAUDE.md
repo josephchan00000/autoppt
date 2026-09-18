@@ -84,7 +84,31 @@ python scripts/05_outline.py
 ```
 產出 `work/05_deck.json`。接著依 `prompts/outline.md` 潤飾文案，
 **先讀 `meta.tone_directive_slide`**，那是這次選定的語氣。
-把所有【待填】補掉。改完：
+把所有【待填】補掉。
+
+**視覺頁另外讀 `prompts/visuals.md`**，那裡有「什麼時候該放什麼圖」的判斷順序。
+一句話版本：**書中原圖 > 外部機構原圖 > 流程圖／時間軸／對照表／雙欄 >
+引言頁與大數字頁 > 自己畫的圖表**。自己用 matplotlib 畫折線圖是最後手段，
+因為聽眾看不出那條線是哪來的。
+
+**每一頁條列之前先問「這頁非得條列不可嗎」。** 實跑一本 21 章的書，84 頁裡
+有 45 頁是條列頁，每頁都沒超字數上限，但整份看下來很悶。規則：
+每頁最多 3 條、連續最多 2 頁條列、全書視覺頁至少四成——
+`08_qa.py` 的「節奏」檢查會抓。
+
+**視覺頁的版面歸屬**：`image` / `table` / `split` 走**內頁2-1**（主標副標用
+母片原生 placeholder，字數上限與內容頁相同 14 / 21）；`flow` / `timeline` /
+`quote` / `stat` / 自畫 `chart` 走**空白內頁**（上限 20 / 30）。
+
+開場先跑：
+
+```bash
+python tools/extract_book_figures.py --input input/book.pdf --out work/08_bookfigs
+```
+
+抽完自己開圖看過，能用書裡原圖的章節就不要自己畫。
+
+改完：
 ```bash
 python scripts/08_qa.py --check-deck
 ```
@@ -102,7 +126,10 @@ python scripts/07_build_script.py
 ```bash
 python scripts/08_qa.py --all
 ```
-任何一項 FAIL 就不准交付。修完 `work/05_deck.json` 之後跑 `make revise`
+任何一項 FAIL 就不准交付。WARN 不擋，但要看過。
+
+**頁數這一項是代理指標**：逐字稿寫完且總時長落在目標區間時，頁數超標只會是
+WARN（視覺頁多的簡報本來就頁數多、每頁短）；逐字稿沒寫完時才是 FAIL。修完 `work/05_deck.json` 之後跑 `make revise`
 （只重跑 6–8，不要重跑前面的階段）。
 
 ## 改稿迴圈
@@ -129,5 +156,7 @@ python scripts/08_qa.py --all
 - 不要一次把所有章節塞進 context
 - 不要為了讓 QA 過而放寬 `config/project.yaml` 的門檻
 - 不要編造 URL 或數據
+- 不要動不動就用 matplotlib 畫圖（先讀 prompts/visuals.md 的優先序）
+- 不要一頁接一頁的條列（每頁 ≤3 條、連續 ≤2 頁、視覺頁 ≥40%）
 - 不要用 `yaml.safe_dump` 覆寫 project.yaml（會洗掉註解）
 - 不要重跑已經完成的階段
