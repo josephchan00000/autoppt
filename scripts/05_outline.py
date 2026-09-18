@@ -29,18 +29,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    DECK_JSON, DIGEST, EVIDENCE, chapter_files, die, ensure_dirs, estimate_lines,
-    info, limits, load_project, ok, parse_chapter_file, read_json, step,
-    visual_len, warn, write_json,
+    DECK_JSON, DIGEST, EVIDENCE, LAYOUT_FAMILIES, chapter_files, die, ensure_dirs,
+    estimate_lines, family_layouts, format_timecode, info, layout_family, limits,
+    load_project, ok, parse_chapter_file, read_json, step, talk_minutes_range,
+    target_slides,
+    tone_directive, tone_key, videos, visual_len, warn, write_json,
 )
 
 # 版面 index（config/fh_template_spec.json）
+# 固定的：封面／目錄／頁籤／空白內頁／結尾
 L_COVER, L_TOC, L_DIVIDER = 0, 1, 2
-L_MAIN = 4          # 內頁1-1 主力版型
-L_VARIANT2 = 6      # 內頁2-1
-L_VARIANT3 = 8      # 內頁3-1
-L_BLANK = 9         # 空白內頁（整頁圖表）
+L_BLANK = 9         # 空白內頁（整頁圖表與影片頁）
 L_CLOSING = 10
+# 內頁三組（主力／次要／第三）由 config/project.yaml 的 deck.layout_family 決定，
+# 在 build_slides() 內取得，不寫死。
 
 MAX_CHAPTERS_BEFORE_GROUPING = 10
 
@@ -69,6 +71,7 @@ def main() -> int:
         ok(f"超過 {MAX_CHAPTERS_BEFORE_GROUPING} 章，已合併為 {len(groups)} 個主題群組")
 
     slides = build_slides(chapters, groups, cfg)
+    slides = trim_to_budget(slides)
     slides = assign_durations(slides, cfg)
 
     deck = {
@@ -80,6 +83,11 @@ def main() -> int:
             "dept": cfg["presenter"].get("dept", ""),
             "date": cfg["presenter"].get("date", ""),
             "minutes": cfg["deck"].get("minutes", 60),
+            "layout_family": layout_family(),
+            "layout_family_label": LAYOUT_FAMILIES[layout_family()]["label"],
+            "tone": tone_key(),
+            "tone_directive_slide": tone_directive("slide"),
+            "tone_directive_narration": tone_directive("narration"),
             "chapters": [{"ch_id": c["ch_id"], "title": c["title"]} for c in chapters],
             "groups": [{"name": g["name"], "ch_ids": g["ch_ids"]} for g in groups],
         },
@@ -92,6 +100,8 @@ def main() -> int:
         info("--dry-run：未寫檔")
         return 0
 
+    for sl in deck["slides"]:
+        sl.pop("_trim", None)          # 內部裁切標記，不寫進 deck.json
     write_json(DECK_JSON, deck)
     ok(f"藍圖 → {DECK_JSON}（{len(slides)} 頁）")
     print()
@@ -159,6 +169,7 @@ def _group_name(chunk: list[dict]) -> str:
 def build_slides(chapters: list[dict], groups: list[dict], cfg: dict) -> list[dict]:
     slides: list[dict] = []
     sid = [0]
+    L_MAIN, L_VARIANT2, L_VARIANT3 = family_layouts()
 
     def S(**kw) -> dict:
         sid[0] += 1
@@ -170,10 +181,13 @@ def build_slides(chapters: list[dict], groups: list[dict], cfg: dict) -> list[di
             "subtitle": None,
             "body": [],
             "chart": None,
+            "video": None,
             "sources": [],
             "narration": "",
             "duration_sec": 70,
             "ch_id": None,
+            # 頁數超出預算時的裁切優先序：數字越大越先被拿掉；0 = 不可裁
+            "_trim": 0,
         }
         base.update(kw)
         slides.append(base)
@@ -183,6 +197,20 @@ def build_slides(chapters: list[dict], groups: list[dict], cfg: dict) -> list[di
     pres = cfg["presenter"]
     book_label = f"《{book.get('title_zh', '')}》"
     pages_per_ch = cfg["deck"].get("pages_per_chapter", [3, 5])
+
+    # 現場要播的影片：有指定 after_ch 的掛在該章之後，其餘統一放在全書綜合之前
+    all_vids = videos()
+    ch_ids = {c["ch_id"] for c in chapters}
+    vids_by_ch: dict[str, list[dict]] = {}
+    loose_vids: list[dict] = []
+    for v in all_vids:
+        if v["after_ch"] in ch_ids:
+            vids_by_ch.setdefault(v["after_ch"], []).append(v)
+        else:
+            if v["after_ch"]:
+                warn(f"影片「{v['title']}」指定的 after_ch={v['after_ch']} 不存在，"
+                     "改放在全書綜合之前")
+            loose_vids.append(v)
 
     # ---- 1. 封面 ----
     S(layout=L_COVER, kind="cover",
@@ -219,7 +247,14 @@ def build_slides(chapters: list[dict], groups: list[dict], cfg: dict) -> list[di
 
         for ch in g["chapters"]:
             # S() 本身已把頁面 append 進 slides，這裡不要再 extend 一次
-            _chapter_slides(ch, S, book_label, pages_per_ch)
+            _chapter_slides(ch, S, book_label, pages_per_ch, L_MAIN, L_VARIANT2)
+            # 這一章之後要播的影片
+            for v in vids_by_ch.get(ch["ch_id"], []):
+                _video_slide(S, v)
+
+    # ---- 4b. 沒指定章節的影片 ----
+    for v in loose_vids:
+        _video_slide(S, v)
 
     # ---- 5. 全書綜合 ----
     S(layout=L_VARIANT3, kind="content",
@@ -229,7 +264,7 @@ def build_slides(chapters: list[dict], groups: list[dict], cfg: dict) -> list[di
             {"level": 0, "text": "【待填】各章之間的因果關係"},
             {"level": 0, "text": "【待填】最反直覺的一點"}],
       sources=[{"label": book_label}], duration_sec=100)
-    S(layout=L_VARIANT3, kind="content",
+    S(layout=L_VARIANT3, kind="content", _trim=3,
       title="這本書沒回答的問題",
       subtitle="留白的地方才是我們要想的",
       body=[{"level": 0, "text": "【待填】書的適用邊界"},
@@ -261,7 +296,8 @@ def build_slides(chapters: list[dict], groups: list[dict], cfg: dict) -> list[di
     return slides
 
 
-def _chapter_slides(ch: dict, S, book_label: str, pages_per_ch: list[int]) -> list[dict]:
+def _chapter_slides(ch: dict, S, book_label: str, pages_per_ch: list[int],
+                    L_MAIN: int, L_VARIANT2: int) -> list[dict]:
     """單一章節的內頁：核心主張 1 + 論點展開 1–2 + 台灣對照／圖表 1（+ 過期數據 1）。
 
     S() 會直接把頁面寫進外層 slides；回傳值只給本函式內部判斷「這章已經幾頁了」，
@@ -306,7 +342,7 @@ def _chapter_slides(ch: dict, S, book_label: str, pages_per_ch: list[int]) -> li
     for i, chunk in enumerate(chunks):
         body = [ln for _, blk in chunk for ln in blk]
         refs = [kp.get("page_ref", "") for kp, _ in chunk if kp.get("page_ref")]
-        made.append(S(layout=L_MAIN, kind="content", ch_id=ch_id,
+        made.append(S(layout=L_MAIN, kind="content", ch_id=ch_id, _trim=(1 if i else 0),
                       title="【待填】這一頁的結論句",
                       subtitle="【待填】為什麼／所以呢",
                       body=body or [{"level": 0, "text": "【待填】"}],
@@ -347,7 +383,7 @@ def _chapter_slides(ch: dict, S, book_label: str, pages_per_ch: list[int]) -> li
     outdated = [v for v in e.get("verified", []) if v.get("status") == "outdated"]
     if outdated and len(made) < max_p:
         v = outdated[0]
-        made.append(S(layout=L_VARIANT2, kind="content", ch_id=ch_id,
+        made.append(S(layout=L_VARIANT2, kind="content", ch_id=ch_id, _trim=2,
                       title="書寫的數字已經變了",
                       subtitle=_truncate(v.get("book_claim", ""), 28),
                       body=[{"level": 0, "text": _truncate(f"書中：{v.get('book_claim','')}", 40)},
@@ -357,6 +393,29 @@ def _chapter_slides(ch: dict, S, book_label: str, pages_per_ch: list[int]) -> li
     return made
 
 
+
+
+
+def _video_slide(S, v: dict) -> dict:
+    """分享會現場要播的影片頁：標題 + 起訖時間碼 + QR code（06_build_pptx 產圖）。
+
+    duration_sec 直接是播放長度，逐字稿只寫進場與收尾的過場詞，
+    所以 narration 的字數檢查對影片頁另有標準（見 08_qa.check_narration）。
+    """
+    span = f"{format_timecode(v['start'])}–{format_timecode(v['end'])}"
+    body = [{"level": 0, "text": f"播放片段 {span}（{format_timecode(v['duration_sec'])}）"}]
+    if v["note"]:
+        body.append({"level": 1, "text": _truncate(v["note"], 60)})
+    return S(layout=L_BLANK, kind="video",
+             title=_truncate(v["title"], 18),
+             subtitle="現場播放",
+             body=body,
+             video={"url": v["url"], "start": v["start"], "end": v["end"],
+                    "span": span, "note": v["note"]},
+             sources=[{"label": "影片連結見頁面 QR code", "url": v["url"]}],
+             # 播放時間 + 前後過場約 20 秒
+             duration_sec=max(30, v["duration_sec"] + 20),
+             ch_id=v["after_ch"])
 
 
 def _fit_bullets(texts: list[str]) -> list[dict]:
@@ -438,21 +497,56 @@ def _truncate(text: str, max_visual: int) -> str:
     return out.rstrip("，、。；：") + "…"
 
 
+def trim_to_budget(slides: list[dict]) -> list[dict]:
+    """頁數超出預算就依 _trim 優先序拿掉可選頁面。
+
+    短講（例如 30–45 分鐘）不該產出 60 頁再叫使用者自己刪。
+    優先序：3 =「這本書沒回答的問題」→ 2 = 過期數據頁 → 1 = 第二張論點展開頁。
+    _trim = 0 的頁面（封面、頁籤、核心主張、圖表、影片…）永不裁切。
+    """
+    lo, hi = target_slides()
+    before = len(slides)
+    for level in (3, 2, 1):
+        i = 0
+        while len(slides) > hi and i < len(slides):
+            if slides[i].get("_trim") == level and len(slides) - 1 >= lo:
+                slides.pop(i)
+            else:
+                i += 1
+    if len(slides) < before:
+        ok(f"依 {lo}–{hi} 頁的預算裁掉 {before - len(slides)} 頁可選內容")
+    return slides
+
+
 def assign_durations(slides: list[dict], cfg: dict) -> list[dict]:
-    """把總時長壓到目標區間（規劃書 §9：總長 55 分鐘，留 5 分鐘 Q&A）。"""
-    lo, hi = cfg.get("narration", {}).get("total_minutes_range", [50, 58])
+    """把總時長壓到目標區間（規劃書 §9：總長 55 分鐘，留 5 分鐘 Q&A）。
+
+    影片頁的秒數是實際播放長度，不參與縮放；其餘頁面分攤剩下的時間。
+    """
+    lo, hi = talk_minutes_range()
     target_sec = int(((lo + hi) / 2) * 60)
-    cur = sum(s["duration_sec"] for s in slides)
-    if cur <= 0:
+
+    fixed = [s for s in slides if s["kind"] == "video"]
+    flex = [s for s in slides if s["kind"] != "video"]
+    fixed_sec = sum(s["duration_sec"] for s in fixed)
+
+    budget = target_sec - fixed_sec
+    cur = sum(s["duration_sec"] for s in flex)
+    if cur <= 0 or not flex:
         return slides
-    scale = target_sec / cur
-    for s in slides:
+    if budget < cur * 0.35:
+        warn(f"影片佔掉 {fixed_sec // 60}:{fixed_sec % 60:02d}，"
+             f"剩給講述的時間不足。考慮減少影片或拉長 deck.minutes。")
+        budget = max(budget, int(cur * 0.35))
+
+    scale = budget / cur
+    for s in flex:
         s["duration_sec"] = max(20, int(round(s["duration_sec"] * scale / 5) * 5))
     return slides
 
 
 def print_budget(slides: list[dict], cfg: dict) -> None:
-    lo, hi = cfg["deck"].get("target_slides", [45, 60])
+    lo, hi = target_slides()
     total = len(slides)
     by_kind: dict[str, int] = {}
     for s in slides:
@@ -462,7 +556,8 @@ def print_budget(slides: list[dict], cfg: dict) -> None:
     print("  頁數預算")
     print("  " + "─" * 52)
     names = {"cover": "封面", "toc": "全書地圖 / Agenda", "divider": "章節頁籤",
-             "content": "內容頁", "chart": "圖表頁", "closing": "結語 / Q&A"}
+             "content": "內容頁", "chart": "圖表頁", "video": "影片頁",
+             "closing": "結語 / Q&A"}
     for k, n in by_kind.items():
         print(f"  {names.get(k, k):<22} {n:>3} 頁")
     print("  " + "─" * 52)

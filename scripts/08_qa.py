@@ -36,11 +36,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
     DECK_JSON, EVIDENCE, OUTPUT, TEMPLATE, _c, ensure_dirs, estimate_lines,
-    has_concrete, have_cmd, info, limits, load_project, load_spec, narration_chars,
-    ok, read_json, soffice_bin, step, visual_len, warn,
+    format_timecode, has_concrete, have_cmd, info, limits, load_project, load_spec,
+    narration_chars, ok, read_json, soffice_bin, step, talk_minutes_range,
+    target_slides, visual_len, warn,
 )
 
-ALLOWED_CUSTOM_SHAPES = {"SourceLine", "ChartTitle"}
+ALLOWED_CUSTOM_SHAPES = {"SourceLine", "ChartTitle", "VideoTitle", "VideoInfo"}
 EA_EXPECT = "微軟正黑體"
 
 
@@ -179,8 +180,7 @@ def slides_of(deck: dict) -> list[dict]:
 
 # --- 1. 頁數 --------------------------------------------------------------
 def check_page_count(deck: dict) -> Result:
-    cfg = load_project()
-    lo, hi = cfg["deck"].get("target_slides", [45, 60])
+    lo, hi = target_slides()
     r = Result("頁數", f"{lo} ≤ total ≤ {hi}")
     n = len(slides_of(deck))
     if n < lo:
@@ -209,7 +209,8 @@ def check_overflow(deck: dict) -> Result:
         sub = s.get("subtitle") or ""
         body = s.get("body") or []
 
-        if kind not in ("cover", "divider", "closing", "toc") and visual_len(title) > t_max:
+        if kind not in ("cover", "divider", "closing", "toc", "video") \
+                and visual_len(title) > t_max:
             r.fail(f"{sid} 主標 {visual_len(title):.0f} 字 > {t_max}：「{title[:24]}」")
         if sub and visual_len(sub) > s_max:
             r.fail(f"{sid} 副標 {visual_len(sub):.0f} 字 > {s_max}：「{sub[:30]}」")
@@ -348,7 +349,7 @@ def check_links(urls: dict[str, list[str]], timeout: float) -> Result:
 # --- 5. 具體性 ------------------------------------------------------------
 def check_concrete(deck: dict) -> Result:
     r = Result("具體性", "每頁 body 至少含一個數字／年份／專有名詞，否則 WARN")
-    exempt = {"cover", "divider", "closing", "toc", "chart"}
+    exempt = {"cover", "divider", "closing", "toc", "chart", "video"}
     for s in slides_of(deck):
         if s.get("kind") in exempt:
             continue
@@ -445,16 +446,30 @@ def check_narration(deck: dict) -> Result:
     cfg = load_project().get("narration", {})
     cpm = int(cfg.get("chars_per_minute", 220))
     tol = float(cfg.get("tolerance", 0.25))
-    lo_m, hi_m = cfg.get("total_minutes_range", [50, 58])
+    lo_m, hi_m = talk_minutes_range()
 
     r = Result("逐字稿", f"每頁字數 = duration_sec × {cpm}/60 ±{tol:.0%}；總時長 {lo_m}–{hi_m} 分鐘")
     slides = slides_of(deck)
     empty = []
     total_sec = 0
+    video_sec = 0
     for s in slides:
         dur = int(s.get("duration_sec", 0))
         total_sec += dur
         text = (s.get("narration") or "").strip()
+
+        # 影片頁：duration 是播放長度，逐字稿只要進場與收尾的過場詞（30–120 字）
+        if s.get("kind") == "video":
+            video_sec += dur
+            if not text:
+                empty.append(str(s.get("id")))
+            else:
+                got = narration_chars(text)
+                if got > 120:
+                    r.warn(f"{s.get('id')} 是影片頁，逐字稿 {got} 字太長，"
+                           "只要進場與收尾的過場詞（30–120 字）")
+            continue
+
         if not text:
             empty.append(str(s.get("id")))
             continue
@@ -476,6 +491,9 @@ def check_narration(deck: dict) -> Result:
         r.fail(f"總時長 {m}:{sec:02d} 不在 {lo_m}–{hi_m} 分鐘區間")
     else:
         r.note(f"總時長 {m}:{sec:02d}")
+    if video_sec:
+        r.note(f"其中影片播放 {format_timecode(video_sec)}"
+               f"（佔 {video_sec / total_sec:.0%}）")
     return r
 
 

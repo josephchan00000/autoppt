@@ -171,6 +171,13 @@ def fill_narration() -> int:
         "所以下一頁我想談的是，這個原則要怎麼改寫才適用。",
     ]
     for s in deck["slides"]:
+        # 影片頁只要進場與收尾的過場詞（30–120 字），不照 duration 反推
+        if s.get("kind") == "video":
+            v = s.get("video") or {}
+            s["narration"] = (
+                f"這段我想直接讓你們看畫面。[停頓] 我們播 {v.get('span', '')} 這一段，"
+                "看完我再講為什麼這段對我們特別重要。[看向聽眾]")
+            continue
         dur = int(s.get("duration_sec", 60))
         target = dur * 220 / 60
         text, i = "", 0

@@ -20,8 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    DECK_JSON, OUTPUT, TEMPLATE, die, ensure_dirs, estimate_lines, info,
-    limits, load_project, load_spec, ok, read_json, safe_filename, step, visual_len, warn,
+    DECK_JSON, OUTPUT, TEMPLATE, die, ensure_dirs, estimate_lines, format_timecode,
+    info, limits, load_project, load_spec, ok, read_json, safe_filename, step,
+    visual_len, warn,
 )
 
 from pptx import Presentation  # noqa: E402
@@ -278,6 +279,24 @@ def render_chart(chart: dict, out_png: Path) -> Path | None:
     return out_png
 
 
+
+def render_qr(url: str, out_png: Path) -> Path | None:
+    """影片頁的 QR code。沒裝 qrcode 套件就略過，頁面仍會印出網址。"""
+    try:
+        import qrcode
+    except ImportError:
+        warn("未安裝 qrcode 套件，影片頁不會有 QR code（pip install qrcode）")
+        return None
+    q = qrcode.QRCode(box_size=10, border=2,
+                      error_correction=qrcode.constants.ERROR_CORRECT_M)
+    q.add_data(url)
+    q.make(fit=True)
+    img = q.make_image(fill_color="#262627", back_color="white").convert("RGB")
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    img.save(out_png)
+    return out_png
+
+
 # ==========================================================================
 # 主流程
 # ==========================================================================
@@ -393,6 +412,61 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
         s = add(prs, layout)
         set_ph(s, 14, title or "Q & A", size_pt=44, color="B82837")
         remove_empty_placeholders(s)
+        set_notes(s, narration)
+        return {"count": 1, "split": 0, "charts": 0}
+
+    # ---- 影片頁（現場播放）----
+    if kind == "video" and spec.get("video"):
+        v = spec["video"]
+        s = add(prs, 9)
+        strip_group_shapes(s)
+        remove_empty_placeholders(s)
+
+        # 標題 + 副標
+        tb = s.shapes.add_textbox(Emu(467544), Emu(700000), Emu(8208144), Emu(1100000))
+        tb.name = "VideoTitle"
+        tf = tb.text_frame
+        tf.word_wrap = True
+        r = tf.paragraphs[0].add_run()
+        r.text = title or "參考影片"
+        r.font.size = Pt(34)
+        r.font.bold = True
+        r.font.color.rgb = RGBColor.from_string("262627")
+        set_ea_font(r, EA_FONT)
+        p2 = tf.add_paragraph()
+        r2 = p2.add_run()
+        r2.text = f"現場播放　{v.get('span', '')}"
+        r2.font.size = Pt(20)
+        r2.font.color.rgb = RGBColor.from_string("B82837")
+        set_ea_font(r2, EA_FONT)
+
+        # QR code（置中偏左）＋ 右側說明
+        png = OUTPUT / "charts" / f"{spec.get('id', 'video')}_qr.png"
+        made = render_qr(v.get("url", ""), png) if v.get("url") else None
+        qr_size = 2400000
+        if made:
+            s.shapes.add_picture(str(made), Emu(1100000), Emu(2150000),
+                                 Emu(qr_size), Emu(qr_size))
+
+        info_left = 1100000 + qr_size + 500000
+        ib = s.shapes.add_textbox(Emu(info_left), Emu(2300000),
+                                  Emu(9144000 - info_left - 467544), Emu(2200000))
+        ib.name = "VideoInfo"
+        itf = ib.text_frame
+        itf.word_wrap = True
+        lines = [(f"片段 {v.get('span', '')}", 18, "262627")]
+        if v.get("note"):
+            lines.append((v["note"], 15, "939396"))
+        lines.append((v.get("url", ""), 11, "939396"))
+        for i, (txt, sz, col) in enumerate(lines):
+            para = itf.paragraphs[0] if i == 0 else itf.add_paragraph()
+            rr = para.add_run()
+            rr.text = txt
+            rr.font.size = Pt(sz)
+            rr.font.color.rgb = RGBColor.from_string(col)
+            set_ea_font(rr, EA_FONT)
+
+        add_source_line(s, sources)
         set_notes(s, narration)
         return {"count": 1, "split": 0, "charts": 0}
 

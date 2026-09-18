@@ -16,10 +16,67 @@ presenter:
 
 deck:
   minutes: 60
-  target_slides: [45, 60]
+  target_slides: [45, 60]          # 留空或 null 就依 minutes 自動推算（約 0.85 頁/分鐘）
   pages_per_chapter: [3, 5]        # 每章 3–5 頁內頁（不含章節頁籤）
   language: "zh-TW"
   terminology: "中文為主，專有名詞保留英文原文並於首次出現加註"
+
+  # 內頁色系：母片三組內頁的頁首色帶不同，挑一組當主力版型
+  #   1 = 內頁1 / 1-1   復華紅
+  #   2 = 內頁2 / 2-1   米白
+  #   3 = 內頁3 / 3-1   灰
+  layout_family: 1
+
+  # 文案語氣：professional | casual | storytelling（內容見下方 tone_presets）
+  tone: professional
+
+# --- 分享會現場要播的影片 -------------------------------------------------
+# 每一支會生成一張專用影片頁（標題 + QR code + 起訖時間碼），
+# 播放秒數計入總時長，逐字稿只寫進場與收尾的過場詞。
+# start / end 用 mm:ss 或 hh:mm:ss。留空陣列代表不播影片。
+videos: []
+# videos:
+#   - title: "作者 TED 演講：為什麼配置勝過選股"
+#     url: "https://www.youtube.com/watch?v=XXXXXXXXXXX"
+#     start: "02:15"
+#     end: "05:40"
+#     after_ch: ch03          # 放在哪一章之後；留空就放在全書綜合之前
+#     note: "播到他講 LTCM 那段就可以停"
+
+# --- 文案語氣預設 ---------------------------------------------------------
+# 這段文字會被 05_outline.py 帶進 deck.json 的 meta.tone_directive，
+# 潤飾與逐字稿階段照著寫。要自訂語氣直接改這裡的文字。
+tone_presets:
+  professional:
+    label: "專業嚴謹"
+    audience: "對主管與跨部門同事報告"
+    slide: |
+      用字精準，句子完整但不冗長。判斷要有依據，每個主張後面接得出數字或出處。
+      不用口語轉折詞（「其實」「說白了」），不用驚嘆號。
+      主標是結論句，語氣是斷定而非提問。
+    narration: |
+      語速穩，句子完整。可以說「根據主計總處的資料」「這裡要注意的是」。
+      避免「我覺得」，改成「從資料上看」。專有名詞第一次出現要唸全稱。
+  casual:
+    label: "輕鬆口語"
+    audience: "對同事分享，氣氛輕鬆"
+    slide: |
+      像在跟同事講話。可以用短句、可以有轉折詞。
+      主標可以帶一點個人判斷（「這點我不同意」「這才是重點」）。
+      仍然要有數字，但不用每句都端著。
+    narration: |
+      口語，可以用「這邊」「其實」「我自己的經驗是」「講白一點」。
+      可以自嘲、可以說「我一開始也看不懂」。停頓與反問都可以用。
+  storytelling:
+    label: "說故事"
+    audience: "希望聽眾記得住，案例先行"
+    slide: |
+      每頁從一個具體場景或人物開頭，再帶出結論。
+      主標寫成有畫面的句子，不要抽象名詞。
+      數字要綁在故事裡（「那一年他賠掉四成」），不要裸露的統計。
+    narration: |
+      先講故事再講道理。每頁開頭用一個場景把人拉進來，中段揭示轉折，
+      結尾才收到這頁的結論。可以用「你猜後來怎麼樣」這種鉤子。
 
 research:
   taiwan_lens: true                # 每章至少一張台灣／復華對照頁
@@ -41,7 +98,7 @@ limits:
 
 narration:
   chars_per_minute: 220            # 中文語速基準
-  total_minutes_range: [50, 58]    # 總時長 50–58 分鐘（留 5 分鐘 Q&A）
+  total_minutes_range: null        # null = 依 deck.minutes 推算（總長 − 5 分鐘 Q&A）
   tolerance: 0.25                  # 每頁字數 = duration_sec × 220/60 ±25%
 
 # 對岸用語黑名單（規劃書 §10 / §7.3）

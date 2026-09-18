@@ -11,6 +11,24 @@
 
 ## 快速開始
 
+有兩種用法，設定與 Stage 1–2 可以走網頁，其餘階段一律在終端機。
+
+### A. 網頁（推薦給不想碰 CLI 的人）
+
+```bash
+make setup           # 建 venv、裝套件、檢查環境
+make web             # → http://127.0.0.1:5000
+```
+
+這頁可以設定書名講者、**預計長度**、**文案語氣**、**內頁色系（有預覽圖可挑）**、
+**現場要播的影片**，存檔後直接把書檔拖進去，它會跑完 Stage 1–2 並把章節清單
+攤開讓你確認（拆錯了可以在頁面上換策略重拆）。設定會寫進 `config/project.yaml`，
+註解不會被洗掉。
+
+確認章節沒問題之後回終端機接 Stage 3。
+
+### B. 純 CLI
+
 ```bash
 make setup                                  # 建 venv、裝套件、檢查環境
 cp 你的書.pdf input/book.pdf                 # 支援 PDF（文字層/掃描）、EPUB
@@ -27,6 +45,17 @@ make qa                                     # Stage 8  品管
 ```
 
 改稿迴圈：**改 `work/05_deck.json` → `make revise`**（只重跑 Stage 6–8，不要重跑前面的階段）。
+
+---
+
+## 四個可調的設定（`config/project.yaml`，也可在 `make web` 頁面上改）
+
+| 設定 | 效果 |
+|---|---|
+| `deck.minutes` | 預計長度。`target_slides` 與講述時間留 `null` 就依這個推算（約 0.85 頁/分鐘，總長減 5 分鐘 Q&A）。頁數超出預算時 `05_outline.py` 會自動裁掉可選頁面，不會丟一份 60 頁的稿要你自己刪 |
+| `deck.layout_family` | 內頁色系。母片三組內頁的頁首色帶不同：**1 復華紅／2 米白／3 灰**。選到的當主力版型，另外兩組仍用在台灣對照與全書綜合，維持視覺變化 |
+| `deck.tone` | 文案語氣：`professional` 專業嚴謹／`casual` 輕鬆口語／`storytelling` 說故事。內容寫在 `tone_presets`，會帶進 `deck.json` 的 `meta.tone_directive_*`，潤飾與逐字稿階段照著寫。要自訂語氣直接改那段文字 |
+| `videos[]` | 分享會現場要播的影片。每支生成一張影片頁（標題 + QR code + 起訖時間碼），播放秒數計入總時長且不參與縮放，逐字稿只寫進場與收尾的過場詞（QA 對影片頁另有標準）。`after_ch` 指定插在哪一章之後 |
 
 ---
 
@@ -65,9 +94,13 @@ python scripts/03_digest.py --status          # 看整體進度
 ├── work/                        # 中間檔，05_deck.json 是最重要的修改點
 ├── prompts/                     # digest / research / outline / narration
 ├── scripts/                     # 8 支 stage 腳本 + _common.py
+├── web/                         # 上傳頁（Flask，只管設定與 Stage 1–2）
 ├── tools/make_fixtures.py       # 合成測試資料，沒有真書也能驗證 pipeline
 └── output/                      # PPTX / DOCX / qa_report.md / preview
 ```
+
+上傳頁只綁 `127.0.0.1`。要讓別台電腦連才加 `--host 0.0.0.0`，
+但它沒有身分驗證、書檔有版權，請先確認網段安全。
 
 ---
 
@@ -104,7 +137,7 @@ python scripts/03_digest.py --status          # 看整體進度
 | 具體性 | 每頁 body 至少含一個數字／年份／專有名詞，否則 WARN |
 | 版型純度 | layout 必須在模板 11 種之內；無自建 textbox（資料來源行與圖表標題除外） |
 | 字型 | 所有 run 的 `a:ea` typeface = 微軟正黑體 |
-| 逐字稿 | 每頁字數 = duration_sec × 220/60 ±25%；總時長 50–58 分鐘 |
+| 逐字稿 | 每頁字數 = duration_sec × 220/60 ±25%；總時長依 `deck.minutes` 推算（影片頁另計：只要 30–120 字的過場詞） |
 | 對岸用語 | 黑名單掃描（見 `config/project.yaml` 的 `banned_terms`） |
 | 視覺 | LibreOffice 轉 PNG 全頁截圖 → `output/preview/` |
 
@@ -119,6 +152,8 @@ python scripts/03_digest.py --status          # 看整體進度
 | 工具 | 用途 | 安裝 |
 |---|---|---|
 | `tesseract` + `chi_tra` | 掃描版 PDF 的 OCR | `apt install tesseract-ocr tesseract-ocr-chi-tra` |
+| `flask` + `ruamel.yaml` | 上傳頁（純 CLI 可不裝） | 已列在 `requirements.txt` |
+| `qrcode` | 影片頁的 QR code | 已列在 `requirements.txt` |
 | `libreoffice-impress` | QA 預覽截圖 | `apt install libreoffice-impress` |
 | `pdftoppm` | PDF 轉 PNG（沒有會改用 pymupdf） | `apt install poppler-utils` |
 | 微軟正黑體／Noto CJK | 圖表中文字型 | `apt install fonts-noto-cjk` |

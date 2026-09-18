@@ -305,3 +305,135 @@ def soffice_bin() -> str | None:
         if have_cmd(c):
             return c
     return None
+
+
+# --------------------------------------------------------------------------
+# 內頁色系（母片三組內頁的頁首色帶不同）
+# --------------------------------------------------------------------------
+# family → (主力版型, 次要版型, 第三版型)。主力用在核心主張與論點展開，
+# 次要用在台灣對照，第三用在全書綜合，維持規劃書 §7.1 的視覺變化。
+LAYOUT_FAMILIES = {
+    1: {"label": "復華紅", "hex": "#B82837", "single": 3, "titled": 4},
+    2: {"label": "米白", "hex": "#E9E4DA", "single": 5, "titled": 6},
+    3: {"label": "灰", "hex": "#BFBFBF", "single": 7, "titled": 8},
+}
+
+
+def layout_family() -> int:
+    f = load_project().get("deck", {}).get("layout_family", 1)
+    try:
+        f = int(f)
+    except (TypeError, ValueError):
+        f = 1
+    return f if f in LAYOUT_FAMILIES else 1
+
+
+def family_layouts(fam: int | None = None) -> tuple[int, int, int]:
+    """回傳 (主力, 次要, 第三) 的版面 index，皆為『主標+副標』型。"""
+    fam = fam or layout_family()
+    order = [fam] + [k for k in (1, 2, 3) if k != fam]
+    return tuple(LAYOUT_FAMILIES[k]["titled"] for k in order)  # type: ignore[return-value]
+
+
+# --------------------------------------------------------------------------
+# 語氣
+# --------------------------------------------------------------------------
+def tone_key() -> str:
+    cfg = load_project()
+    t = cfg.get("deck", {}).get("tone", "professional")
+    return t if t in (cfg.get("tone_presets") or {}) else "professional"
+
+
+def tone_preset() -> dict:
+    return (load_project().get("tone_presets") or {}).get(tone_key(), {})
+
+
+def tone_directive(kind: str = "slide") -> str:
+    """kind = 'slide'（文案）或 'narration'（逐字稿）。"""
+    p = tone_preset()
+    body = (p.get(kind) or "").strip()
+    label = p.get("label", tone_key())
+    aud = p.get("audience", "")
+    head = f"語氣：{label}" + (f"（{aud}）" if aud else "")
+    return f"{head}\n{body}" if body else head
+
+
+# --------------------------------------------------------------------------
+# 頁數預算：沒指定 target_slides 就依分鐘數推算
+# --------------------------------------------------------------------------
+PAGES_PER_MINUTE = 0.85   # 60 分鐘 → 約 51 頁，落在規劃書的 45–60 區間中段
+
+
+def target_slides() -> tuple[int, int]:
+    deck = load_project().get("deck", {})
+    ts = deck.get("target_slides")
+    if isinstance(ts, (list, tuple)) and len(ts) == 2 and all(
+            isinstance(x, (int, float)) for x in ts):
+        return int(ts[0]), int(ts[1])
+    minutes = int(deck.get("minutes", 60) or 60)
+    mid = minutes * PAGES_PER_MINUTE
+    return max(5, int(mid * 0.85)), max(8, int(mid * 1.15))
+
+
+# --------------------------------------------------------------------------
+# 影片時間碼
+# --------------------------------------------------------------------------
+def parse_timecode(v: str | int | float | None) -> int:
+    """'3:20' / '01:02:03' / 200 → 秒。看不懂就回 0。"""
+    if v is None or v == "":
+        return 0
+    if isinstance(v, (int, float)):
+        return max(0, int(v))
+    parts = str(v).strip().split(":")
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return 0
+    sec = 0
+    for n in nums:
+        sec = sec * 60 + n
+    return max(0, sec)
+
+
+def format_timecode(sec: int) -> str:
+    sec = max(0, int(sec))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def videos() -> list[dict]:
+    """讀 config/project.yaml 的 videos[]，補好秒數欄位並濾掉沒網址的。"""
+    out = []
+    for v in (load_project().get("videos") or []):
+        if not isinstance(v, dict) or not (v.get("url") or "").strip():
+            continue
+        start = parse_timecode(v.get("start"))
+        end = parse_timecode(v.get("end"))
+        dur = max(0, end - start)
+        out.append({
+            "title": (v.get("title") or "").strip() or "參考影片",
+            "url": v["url"].strip(),
+            "start": start,
+            "end": end,
+            "duration_sec": dur,
+            "after_ch": (v.get("after_ch") or "").strip() or None,
+            "note": (v.get("note") or "").strip(),
+        })
+    return out
+
+
+def talk_minutes_range() -> tuple[int, int]:
+    """講述時間目標區間（分鐘）。
+
+    config 明寫 narration.total_minutes_range 就用它；否則依 deck.minutes 推算：
+    上限 = 總長 - 5 分鐘 Q&A，下限 = 上限的 86%（60 分鐘 → 50–55，與規劃書一致）。
+    """
+    cfg = load_project()
+    r = (cfg.get("narration") or {}).get("total_minutes_range")
+    if isinstance(r, (list, tuple)) and len(r) == 2 and all(
+            isinstance(x, (int, float)) for x in r):
+        return int(r[0]), int(r[1])
+    minutes = int((cfg.get("deck") or {}).get("minutes", 60) or 60)
+    hi = max(5, minutes - 5)
+    return max(3, int(hi * 0.86)), hi

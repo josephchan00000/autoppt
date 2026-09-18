@@ -19,7 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
     DECK_JSON, DIGEST, OUTPUT, SCRIPT_JSON, die, ensure_dirs, info, load_project,
-    narration_chars, ok, read_json, safe_filename, step, warn, write_json,
+    narration_chars, ok, read_json, safe_filename, step, talk_minutes_range, warn,
+    write_json,
 )
 
 from docx import Document  # noqa: E402
@@ -113,7 +114,7 @@ def main() -> int:
     ok(f"逐字稿 → {out}")
     ok(f"逐字稿索引 → {SCRIPT_JSON}")
     total = stats["total_sec"]
-    lo, hi = cfg.get("narration", {}).get("total_minutes_range", [50, 58])
+    lo, hi = talk_minutes_range()
     info(f"總時長 {mmss(total)}（目標 {lo}–{hi} 分鐘）／全文 {stats['chars']:,} 字")
     if stats["empty"]:
         warn(f"{stats['empty']} 頁的 narration 仍空白 —— "

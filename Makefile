@@ -2,6 +2,7 @@
 # 復華風格「專業書分享」簡報自動化 pipeline
 #   make setup    建虛擬環境、裝套件、檢查母片與外部工具
 #   make check    只檢查環境（不安裝）
+#   make web      開上傳頁（設定 + 上傳書檔 + Stage 1–2）http://127.0.0.1:5000
 #   make extract  Stage 1   BOOK=input/book.pdf
 #   make split    Stage 2   → 停：人工確認章節清單
 #   make digest   Stage 3   逐章深讀（Claude Code 驅動）
@@ -17,8 +18,8 @@ PIP     := .venv/bin/pip
 BOOK    ?= $(firstword $(wildcard input/book.* input/*.pdf input/*.epub input/*.mobi))
 
 .DEFAULT_GOAL := help
-.PHONY: help setup check extract split digest research outline build pptx script qa \
-        revise preview clean-work clean-output distclean
+.PHONY: help setup check web extract split digest research outline build pptx script qa \
+        revise preview check-sources clean-work clean-output distclean
 
 help:
 	@grep -E '^#   make' Makefile | sed 's/^#   /  /'
@@ -34,6 +35,11 @@ setup:
 
 check:
 	@$(PY) scripts/08_qa.py --check-env
+
+# --- 上傳頁 --------------------------------------------------------------
+PORT ?= 5000
+web:
+	$(PY) web/app.py --port $(PORT)
 
 # --- Stage 1–2 ------------------------------------------------------------
 extract:
