@@ -1,0 +1,22 @@
+# 虛擬環境
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# 原始書檔（版權，不入庫）
+input/*
+!input/.gitkeep
+
+# 中間產物：保留目錄結構，內容不入庫
+work/**
+!work/**/
+!work/**/.gitkeep
+
+# 產出
+output/**
+!output/**/
+!output/**/.gitkeep
+
+# 系統
+.DS_Store

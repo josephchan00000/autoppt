@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>簡報設定 — 復華專業書分享</title>
+<style>
+  :root{
+    --red:#B82837; --gray:#939396; --gold:#B08F6E; --dark:#262627;
+    --bg:#F7F7F8; --card:#FFFFFF; --line:#E3E3E6; --soft:#FAFAFB;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#161617; --card:#1E1E20; --line:#333336; --dark:#EDEDEF;
+      --gray:#9A9A9E; --soft:#232326;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--dark);
+    font:15px/1.65 "Microsoft JhengHei","微軟正黑體","PingFang TC","Noto Sans TC",
+         -apple-system,"Segoe UI",sans-serif;}
+  .wrap{max-width:940px; margin:0 auto; padding:40px 16px 90px}
+  h1{font-size:24px; margin:0 0 4px}
+  h1 span{color:var(--red)}
+  .sub{color:var(--gray); font-size:14px; margin:0 0 26px}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:10px;
+        padding:22px; margin-bottom:16px}
+  .card > h2{font-size:14px; margin:0 0 16px; color:var(--gray); font-weight:600;
+             letter-spacing:.04em}
+  .card > h2 b{color:var(--red); margin-right:8px; font-weight:700}
+
+  /* 上傳 */
+  #drop{border:2px dashed var(--line); border-radius:10px; padding:38px 20px;
+        text-align:center; cursor:pointer; transition:.15s}
+  #drop:hover,#drop.over{border-color:var(--red); background:rgba(184,40,55,.04)}
+  #drop .big{font-size:17px; font-weight:600; margin-bottom:6px}
+  #drop .hint{color:var(--gray); font-size:13px}
+  input[type=file]{display:none}
+
+  /* 表單 */
+  .grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px}
+  label.f{display:block; font-size:12.5px; color:var(--gray); margin-bottom:5px}
+  input[type=text],input[type=number],input[type=url],select{
+    width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:7px;
+    background:var(--card); color:var(--dark); font-family:inherit; font-size:14px}
+  input:focus,select:focus{outline:none; border-color:var(--red)}
+
+  /* 選擇卡 */
+  .picks{display:grid; gap:12px}
+  .picks.tone{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+  .picks.fam{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+  .pick{border:2px solid var(--line); border-radius:9px; padding:13px; cursor:pointer;
+        background:var(--soft); transition:.14s}
+  .pick:hover{border-color:var(--gray)}
+  .pick.on{border-color:var(--red); background:rgba(184,40,55,.05)}
+  .pick .t{font-weight:600; font-size:14.5px; margin-bottom:3px}
+  .pick .t .dot{display:inline-block; width:11px; height:11px; border-radius:3px;
+                margin-right:7px; vertical-align:-1px; border:1px solid rgba(0,0,0,.15)}
+  .pick .d{font-size:12.5px; color:var(--gray); line-height:1.55}
+  .pick img{width:100%; border-radius:6px; margin-bottom:9px; display:block;
+            border:1px solid var(--line); background:#fff}
+
+  /* 影片 */
+  .vid{border:1px solid var(--line); border-radius:9px; padding:14px; margin-bottom:11px;
+       background:var(--soft)}
+  .vid .top{display:flex; gap:10px; align-items:center; margin-bottom:11px}
+  .vid .top input{flex:1}
+  .vid .times{display:grid; grid-template-columns:1fr 1fr 1.3fr; gap:10px}
+  .vid .len{font-size:12.5px; color:var(--red); margin-top:9px; min-height:18px}
+
+  .btn{border:1px solid var(--line); background:var(--card); color:var(--dark);
+       border-radius:7px; padding:8px 15px; font-size:13.5px; cursor:pointer;
+       font-family:inherit; transition:.12s}
+  .btn:hover{border-color:var(--red); color:var(--red)}
+  .btn.primary{background:var(--red); border-color:var(--red); color:#fff}
+  .btn.primary:hover{opacity:.88; color:#fff}
+  .btn.sm{padding:5px 10px; font-size:12.5px}
+  .btn:disabled{opacity:.45; cursor:not-allowed}
+  .row{display:flex; gap:9px; flex-wrap:wrap; align-items:center}
+
+  .meta{display:flex; gap:20px; flex-wrap:wrap; font-size:13.5px; color:var(--gray)}
+  .meta b{color:var(--dark); font-weight:600}
+  pre.log{background:var(--bg); border:1px solid var(--line); border-radius:7px;
+      padding:13px 15px; font-size:12.5px; line-height:1.6; overflow-x:auto;
+      white-space:pre-wrap; word-break:break-word; margin:10px 0 0;
+      font-family:ui-monospace,Menlo,Consolas,monospace}
+  table{width:100%; border-collapse:collapse; font-size:13.5px}
+  th,td{padding:8px 10px; text-align:left; border-bottom:1px solid var(--line)}
+  th{color:var(--gray); font-weight:600; font-size:12.5px; white-space:nowrap}
+  td.num,th.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
+  tr.bad td{color:var(--red)}
+  .tag{display:inline-block; background:rgba(184,40,55,.1); color:var(--red);
+       border-radius:4px; padding:1px 7px; font-size:11.5px; margin-left:6px}
+  .bar{height:5px; background:var(--line); border-radius:3px; overflow:hidden; min-width:54px}
+  .bar i{display:block; height:100%; background:var(--gray)}
+  tr.bad .bar i{background:var(--red)}
+  .note{font-size:13px; color:var(--gray); margin:12px 0 0}
+  .note.alert{color:var(--red)}
+  .next{border-left:3px solid var(--gold); padding:2px 0 2px 14px; margin-top:16px}
+  .next code{background:var(--bg); border:1px solid var(--line); border-radius:5px;
+             padding:2px 7px; font-size:12.5px; display:inline-block; margin-top:5px}
+  .hidden{display:none}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);
+        border-top-color:var(--red);border-radius:50%;animation:s .7s linear infinite;
+        vertical-align:-2px;margin-right:7px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .est{font-size:13px; color:var(--gray); margin-top:9px}
+  .est b{color:var(--dark)}
+  .savebar{position:sticky; bottom:0; background:var(--card); border:1px solid var(--line);
+    border-radius:10px; padding:13px 18px; display:flex; gap:12px; align-items:center;
+    justify-content:space-between; box-shadow:0 -2px 14px rgba(0,0,0,.06); margin-top:20px}
+  .savebar .msg{font-size:13px; color:var(--gray)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>簡報設定 <span>·</span> 復華專業書分享</h1>
+  <p class="sub">設定好之後上傳書檔，這頁會跑完 Stage 1–2 並把章節清單攤開給你確認。
+     Stage 3 之後回終端機跑。</p>
+
+  <!-- 1 書本資訊 -->
+  <div class="card">
+    <h2><b>1</b>書本與講者</h2>
+    <div class="grid">
+      <div><label class="f">中文書名</label><input type="text" id="title_zh"></div>
+      <div><label class="f">原文書名</label><input type="text" id="title_en"></div>
+      <div><label class="f">作者</label><input type="text" id="author"></div>
+      <div><label class="f">出版社 / 年</label><input type="text" id="publisher_year"></div>
+      <div><label class="f">講者</label><input type="text" id="p_name"></div>
+      <div><label class="f">部門</label><input type="text" id="p_dept"></div>
+      <div><label class="f">日期</label><input type="text" id="p_date" placeholder="2026/05/20"></div>
+    </div>
+  </div>
+
+  <!-- 2 長度 -->
+  <div class="card">
+    <h2><b>2</b>預計長度</h2>
+    <div class="row">
+      <input type="number" id="minutes" min="10" max="240" step="5" style="width:110px">
+      <span style="color:var(--gray);font-size:13.5px">分鐘</span>
+    </div>
+    <div class="est" id="est"></div>
+  </div>
+
+  <!-- 3 語氣 -->
+  <div class="card">
+    <h2><b>3</b>文案語氣</h2>
+    <div class="picks tone" id="tones"></div>
+  </div>
+
+  <!-- 4 母片色系 -->
+  <div class="card">
+    <h2><b>4</b>內頁色系</h2>
+    <div class="picks fam" id="fams"></div>
+    <div class="note">選到的色系會當主力版型（核心主張與論點展開），
+      另外兩組仍會用在台灣對照與全書綜合，維持視覺變化。</div>
+  </div>
+
+  <!-- 5 影片 -->
+  <div class="card">
+    <h2><b>5</b>現場要播的影片</h2>
+    <div id="vids"></div>
+    <div class="row" style="margin-top:4px">
+      <button class="btn sm" id="addVid">＋ 加一支影片</button>
+      <span class="note" style="margin:0">每支會生成一張影片頁（標題 + QR code + 時間碼），
+        播放時間計入總時長。</span>
+    </div>
+  </div>
+
+  <!-- 存檔 -->
+  <div class="savebar">
+    <span class="msg" id="saveMsg">改完記得存檔，設定會寫進 config/project.yaml</span>
+    <button class="btn primary" id="save">存設定</button>
+  </div>
+
+  <!-- 6 上傳 -->
+  <div class="card" style="margin-top:26px">
+    <h2><b>6</b>放書檔進來</h2>
+    <div id="drop">
+      <div class="big">把書檔拖進來，或點一下選檔</div>
+      <div class="hint">支援 PDF（含掃描版，會自動 OCR）與 EPUB ·
+        上限 {{ max_mb }} MB · MOBI 請先用 Calibre 轉 EPUB</div>
+    </div>
+    <input type="file" id="file" accept=".pdf,.epub">
+    <div id="uploadNote" class="note hidden"></div>
+    <div id="logBox" class="hidden"><pre class="log" id="log"></pre></div>
+  </div>
+
+  <!-- 7 狀態 -->
+  <div class="card hidden" id="stateCard">
+    <h2><b>7</b>目前狀態</h2>
+    <div class="meta" id="meta"></div>
+    <div class="row" style="margin-top:15px">
+      <button class="btn" id="btnOcr">看 OCR 信心值報告</button>
+      <button class="btn" id="btnReset">清掉書檔重來</button>
+    </div>
+    <pre class="log hidden" id="ocrLog"></pre>
+  </div>
+
+  <!-- 8 章節表 -->
+  <div class="card hidden" id="chCard">
+    <h2><b>8</b>章節清單（驗收點）</h2>
+    <div id="tableBox"></div>
+    <div id="chNote" class="note"></div>
+    <div class="row" style="margin-top:16px">
+      <span style="color:var(--gray);font-size:13px">拆錯了就換策略重拆：</span>
+      <button class="btn sm" data-mode="auto">自動（書籤優先）</button>
+      <button class="btn sm" data-mode="regex">強制正規式</button>
+      <button class="btn sm" data-mode="split">強制均分</button>
+      <input type="number" id="splitN" value="8" min="2" max="40" style="width:62px">
+      <span style="color:var(--gray);font-size:13px">章</span>
+    </div>
+    <div class="next">
+      <div style="font-size:13px;color:var(--gray)">確認沒問題就回終端機接 Stage 3：</div>
+      <code>python scripts/03_digest.py --next</code>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let S = {{ settings|tojson }};
+let ST = {{ state|tojson }};
+
+/* ---------- 設定表單 ---------- */
+function fillForm(){
+  const b = S.book||{}, p = S.presenter||{};
+  title_zh.value = b.title_zh||''; title_en.value = b.title_en||'';
+  author.value = b.author||''; publisher_year.value = b.publisher_year||'';
+  p_name.value = p.name||''; p_dept.value = p.dept||''; p_date.value = p.date||'';
+  minutes.value = S.minutes;
+  estimate();
+
+  $('#tones').innerHTML = S.tones.map(t => `
+    <div class="pick ${t.key===S.tone?'on':''}" data-tone="${t.key}">
+      <div class="t">${t.label}</div>
+      <div class="d">${esc(t.audience)}<br>${esc((t.slide||'').split('\n')[0])}</div>
+    </div>`).join('');
+  $('#fams').innerHTML = S.families.map(f => `
+    <div class="pick ${f.key===S.layout_family?'on':''}" data-fam="${f.key}">
+      <img src="/api/layout-preview/${f.key}" alt="${f.label} 內頁預覽" loading="lazy">
+      <div class="t"><span class="dot" style="background:${f.hex}"></span>${f.label}</div>
+      <div class="d">內頁${f.key} / ${f.key}-1</div>
+    </div>`).join('');
+
+  document.querySelectorAll('[data-tone]').forEach(el => el.onclick = () => {
+    S.tone = el.dataset.tone; fillForm(); dirty();
+  });
+  document.querySelectorAll('[data-fam]').forEach(el => el.onclick = () => {
+    S.layout_family = +el.dataset.fam; fillForm(); dirty();
+  });
+  renderVids();
+}
+
+function estimate(){
+  const m = +minutes.value || 60;
+  const mid = m*0.85, lo = Math.max(5,Math.floor(mid*0.85)), hi = Math.max(8,Math.floor(mid*1.15));
+  const vsec = S.videos.reduce((a,v)=>a+Math.max(0,tc(v.end)-tc(v.start)),0);
+  $('#est').innerHTML = `預估頁數 <b>${lo}–${hi} 頁</b>`
+    + (vsec ? ` · 其中影片播放 <b>${fmt(vsec)}</b>，講述時間 <b>${fmt(Math.max(0,m*60-300-vsec))}</b>（已扣 5 分鐘 Q&A）` : '');
+}
+minutes.oninput = () => { estimate(); dirty(); };
+['title_zh','title_en','author','publisher_year','p_name','p_dept','p_date']
+  .forEach(id => $('#'+id).oninput = dirty);
+
+function tc(v){ if(!v) return 0; return String(v).split(':').reduce((a,n)=>a*60+(+n||0),0); }
+function fmt(s){ s=Math.max(0,Math.round(s)); const h=~~(s/3600),m=~~(s%3600/60),x=s%60;
+  return h? `${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`
+          : `${m}:${String(x).padStart(2,'0')}`; }
+
+/* ---------- 影片 ---------- */
+function renderVids(){
+  const chOpts = ['<option value="">（放在全書綜合之前）</option>']
+    .concat((ST.ch_ids||[]).map(c=>`<option value="${c}">${c} 之後</option>`)).join('');
+  $('#vids').innerHTML = S.videos.map((v,i) => `
+    <div class="vid" data-i="${i}">
+      <div class="top">
+        <input type="text" class="v-title" placeholder="影片標題" value="${esc(v.title)}">
+        <button class="btn sm v-del">移除</button>
+      </div>
+      <input type="url" class="v-url" placeholder="https://..." value="${esc(v.url)}"
+             style="margin-bottom:10px">
+      <div class="times">
+        <div><label class="f">開始 mm:ss</label>
+          <input type="text" class="v-start" value="${esc(v.start)}" placeholder="2:15"></div>
+        <div><label class="f">結束 mm:ss</label>
+          <input type="text" class="v-end" value="${esc(v.end)}" placeholder="5:40"></div>
+        <div><label class="f">插在哪裡</label>
+          <select class="v-after">${chOpts}</select></div>
+      </div>
+      <input type="text" class="v-note" placeholder="備註（選填，會印在投影片上）"
+             value="${esc(v.note)}" style="margin-top:10px">
+      <div class="len"></div>
+    </div>`).join('');
+
+  S.videos.forEach((v,i) => {
+    const el = document.querySelector(`.vid[data-i="${i}"]`);
+    el.querySelector('.v-after').value = v.after_ch||'';
+    const sync = () => {
+      v.title = el.querySelector('.v-title').value;
+      v.url   = el.querySelector('.v-url').value;
+      v.start = el.querySelector('.v-start').value;
+      v.end   = el.querySelector('.v-end').value;
+      v.after_ch = el.querySelector('.v-after').value;
+      v.note  = el.querySelector('.v-note').value;
+      const d = tc(v.end)-tc(v.start);
+      el.querySelector('.len').textContent = v.end && d<=0
+        ? '結束時間要大於開始時間' : (d>0 ? `播放長度 ${fmt(d)}` : '');
+      estimate(); dirty();
+    };
+    el.querySelectorAll('input,select').forEach(x => x.oninput = sync);
+    el.querySelector('.v-del').onclick = () => { S.videos.splice(i,1); renderVids(); estimate(); dirty(); };
+    sync();
+  });
+}
+$('#addVid').onclick = () => {
+  S.videos.push({title:'',url:'',start:'0:00',end:'3:00',after_ch:'',note:''});
+  renderVids(); dirty();
+};
+
+/* ---------- 存檔 ---------- */
+let isDirty = false;
+function dirty(){ isDirty = true; $('#saveMsg').textContent = '有未儲存的變更'; $('#save').disabled = false; }
+$('#save').onclick = async () => {
+  $('#save').disabled = true; $('#saveMsg').innerHTML = '<span class="spin"></span>存檔中…';
+  const body = {
+    book:{title_zh:title_zh.value,title_en:title_en.value,author:author.value,
+          publisher_year:publisher_year.value},
+    presenter:{name:p_name.value,dept:p_dept.value,date:p_date.value},
+    minutes:+minutes.value, tone:S.tone, layout_family:S.layout_family, videos:S.videos,
+  };
+  const r = await fetch('/api/settings',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j = await r.json();
+  if(j.ok){ S = j.settings; isDirty=false; $('#saveMsg').textContent = j.message; fillForm(); }
+  else{ $('#saveMsg').textContent = '✗ ' + j.error; $('#save').disabled = false; }
+};
+window.onbeforeunload = () => isDirty ? '有未儲存的設定' : undefined;
+
+/* ---------- 上傳 ---------- */
+const drop = $('#drop'), file = $('#file');
+drop.onclick = () => file.click();
+['dragenter','dragover'].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', ev => { if(ev.dataTransfer.files.length) upload(ev.dataTransfer.files[0]); });
+file.onchange = () => { if(file.files.length) upload(file.files[0]); };
+
+function note(msg, bad){
+  const n = $('#uploadNote'); n.classList.remove('hidden');
+  n.classList.toggle('alert', !!bad); n.innerHTML = msg;
+}
+async function upload(f){
+  const fd = new FormData(); fd.append('book', f);
+  note(`<span class="spin"></span>上傳「${esc(f.name)}」並解析中… 掃描版 PDF 要跑 OCR，可能需要幾分鐘`);
+  $('#logBox').classList.add('hidden');
+  try{
+    const r = await fetch('/api/upload',{method:'POST',body:fd});
+    const j = await r.json();
+    if(!j.ok && j.error){ note(esc(j.error), true); return; }
+    showSteps(j.steps); note(j.ok ? '解析完成' : '解析過程有錯，看下面的輸出', !j.ok);
+    render(j.state);
+  }catch(e){ note('上傳失敗：'+esc(String(e)), true); }
+}
+function showSteps(steps){
+  if(!steps) return;
+  $('#logBox').classList.remove('hidden');
+  $('#log').textContent = steps.map(s=>`$ python scripts/${s.cmd}\n${s.output}`).join('\n\n');
+}
+async function post(url, body){
+  const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify(body||{})});
+  return r.json();
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.onclick = async () => {
+  note('<span class="spin"></span>重新拆章中…');
+  const j = await post('/api/resplit',{mode:b.dataset.mode,n:+$('#splitN').value});
+  if(!j.ok && j.error){ note(esc(j.error), true); return; }
+  showSteps(j.steps); note('重拆完成'); render(j.state);
+});
+$('#btnReset').onclick = async () => {
+  if(!confirm('會刪掉 input/ 的書檔與 work/01_raw、work/02_chapters 的中間檔，確定？')) return;
+  const j = await post('/api/reset'); render(j.state);
+  $('#logBox').classList.add('hidden'); note('已清空，可以重新上傳');
+};
+$('#btnOcr').onclick = async () => {
+  const j = await (await fetch('/api/ocr-report')).json();
+  const box = $('#ocrLog'); box.classList.remove('hidden');
+  box.textContent = j.ok ? j.markdown : j.error;
+};
+
+/* ---------- 章節表 ---------- */
+function render(s){
+  ST = s;
+  $('#stateCard').classList.toggle('hidden', !s.book);
+  $('#meta').innerHTML = [
+    `書檔 <b>${esc(s.book||'（無）')}</b>`,
+    s.book ? `大小 <b>${s.book_size_mb} MB</b>` : '',
+    `解析 <b>${s.extracted?'已完成':'未完成'}</b>`,
+    `章節 <b>${s.chapters.length}</b>`,
+  ].filter(Boolean).join('');
+  $('#btnOcr').style.display = s.ocr_report ? '' : 'none';
+  $('#chCard').classList.toggle('hidden', !s.chapters.length);
+  renderVids();
+  if(!s.chapters.length) return;
+
+  const total = s.chapters.reduce((a,c)=>a+c.word_count,0) || 1;
+  const maxShare = Math.max(...s.chapters.map(c=>c.share), 0.01);
+  $('#tableBox').innerHTML = `<table>
+    <thead><tr><th>章號</th><th>標題</th><th class="num">起訖頁</th>
+      <th class="num">字數</th><th class="num">占比</th><th style="width:70px"></th></tr></thead>
+    <tbody>${s.chapters.map(c=>`
+      <tr class="${c.flag?'bad':''}">
+        <td>${c.ch_id}</td>
+        <td>${esc(c.title)}${c.flag?`<span class="tag">${c.flag}</span>`:''}</td>
+        <td class="num">${(c.pages||[]).join('–')}</td>
+        <td class="num">${c.word_count.toLocaleString()}</td>
+        <td class="num">${(c.share*100).toFixed(1)}%</td>
+        <td><div class="bar"><i style="width:${(c.share/maxShare*100).toFixed(0)}%"></i></div></td>
+      </tr>`).join('')}
+      <tr><td></td><td style="color:var(--gray)">合計</td><td></td>
+        <td class="num"><b>${total.toLocaleString()}</b></td><td></td><td></td></tr>
+    </tbody></table>`;
+
+  const n = $('#chNote');
+  n.classList.toggle('alert', s.bad>0);
+  n.textContent = s.bad
+    ? `${s.bad} 章字數異常（紅字），代表拆錯了。換個策略重拆，或直接手改 work/02_chapters/*.md。`
+    : '字數分布正常，沒有明顯拆錯的章節。';
+}
+
+function esc(s){ const d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
+
+fillForm(); render(ST); $('#save').disabled = true;
+</script>
+</body>
+</html>
