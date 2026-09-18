@@ -1,0 +1,71 @@
+# ===========================================================================
+# 本次專案設定 —— 開跑前先把 book / presenter 兩區填好
+# 其餘欄位為規劃書 §3 的既定值，非必要不要動
+# ===========================================================================
+
+book:
+  title_zh: "（中文書名）"
+  title_en: "（原文書名）"
+  author: "（作者）"
+  publisher_year: "（出版社 / 年）"
+
+presenter:
+  name: "Josh Chan"
+  dept: "復華投信"
+  date: "2026/XX/XX"
+
+deck:
+  minutes: 60
+  target_slides: [45, 60]
+  pages_per_chapter: [3, 5]        # 每章 3–5 頁內頁（不含章節頁籤）
+  language: "zh-TW"
+  terminology: "中文為主，專有名詞保留英文原文並於首次出現加註"
+
+research:
+  taiwan_lens: true                # 每章至少一張台灣／復華對照頁
+  min_sources_per_chapter: 2
+  max_source_age_years: 3          # 超過 3 年的數據要標註「截至 XXXX 年」
+
+# --- 以下為文案與品管的硬性門檻（規劃書 §7.3 / §8.4 / §10）-----------------
+limits:
+  title_max_chars: 18              # 主標 ≤ 18 字
+  subtitle_max_chars: 28           # 副標 ≤ 28 字
+  bullet_l1_max_chars: 40          # 第一層要點 ≤ 40 字
+  bullet_l2_max_chars: 60          # 第二層補充 ≤ 60 字
+  body_max_chars_per_slide: 160    # 每頁內文總字數 ≤ 160 字
+  bullets_l1_range: [3, 5]         # 每頁第一層要點 3–5 條
+  max_outline_level: 1             # 層級最多 2 層（level 0/1），不准第 3 層
+  max_body_lines: 8                # 24pt 中文估算最多 8 行，超過就降級／拆頁
+  font_downgrade_pt: 20            # 第一段降級字級
+  font_floor_pt: 16                # 絕不允許縮到 16pt 以下
+
+narration:
+  chars_per_minute: 220            # 中文語速基準
+  total_minutes_range: [50, 58]    # 總時長 50–58 分鐘（留 5 分鐘 Q&A）
+  tolerance: 0.25                  # 每頁字數 = duration_sec × 220/60 ±25%
+
+# 對岸用語黑名單（規劃書 §10 / §7.3）
+banned_terms:
+  - 賦能
+  - 抓手
+  - 閉環
+  - 顆粒度
+  - 打法
+  - 復盤
+  - 落地性
+  - 對標
+  - 底層邏輯
+  - 心智模型化
+  - 強力度
+  - 顆粒
+  - 鏈路
+  - 生態位
+  - 護城河化
+  - 用戶                            # 台灣慣用「使用者／客戶」
+  - 信息                            # 台灣慣用「資訊」
+  - 質量                            # 台灣慣用「品質」
+  - 數據化運營
+  - 視頻
+  - 軟件
+  - 硬件
+  - 網絡                            # 台灣慣用「網路」

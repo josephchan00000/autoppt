@@ -1,0 +1,297 @@
+{
+  "template_file": "assets/FH_template.pptx",
+  "slide_size_emu": {
+    "width": 9144000,
+    "height": 6858000,
+    "aspect": "4:3 (10in x 7.5in)"
+  },
+  "theme": {
+    "fonts": {
+      "latin_major": "Arial",
+      "latin_minor": "Arial",
+      "ea_major": "微軟正黑體",
+      "ea_minor": "微軟正黑體"
+    },
+    "colors": {
+      "dk1_text": "262627",
+      "lt1": "FFFFFF",
+      "accent1_fuhhwa_red": "B82837",
+      "accent2_gray": "939396",
+      "accent3_gold": "B08F6E",
+      "accent4_blue": "00A0E9",
+      "accent5_orange_red": "E83828",
+      "accent6_orange": "F79646",
+      "layout_gold_variant": "C9A063"
+    }
+  },
+  "master_text_sizes_pt": {
+    "title_style_lvl1": 44,
+    "body_lvl1": 32,
+    "body_lvl2": 28,
+    "body_lvl3": 24,
+    "body_lvl4_9": 20,
+    "other_style": 18
+  },
+  "layouts": [
+    {
+      "index": 0,
+      "name": "標題",
+      "use": "封面",
+      "placeholders": {
+        "0": {
+          "role": "主標題",
+          "emu": [
+            1691680,
+            2708920,
+            6404913,
+            794519
+          ],
+          "size_pt": 48,
+          "color": "B82837"
+        },
+        "14": {
+          "role": "副標題",
+          "emu": [
+            1691680,
+            3573016,
+            4968527,
+            720080
+          ],
+          "size_pt": 20
+        },
+        "13": {
+          "role": "部門/日期",
+          "emu": [
+            6588225,
+            4652640,
+            2448271,
+            576560
+          ],
+          "size_pt": 20
+        }
+      }
+    },
+    {
+      "index": 1,
+      "name": "目錄",
+      "use": "Agenda／全書地圖",
+      "placeholders": {
+        "13": {
+          "role": "條列內容",
+          "emu": [
+            1403648,
+            1052736,
+            7272338,
+            5113337
+          ],
+          "size_pt": 36
+        }
+      }
+    },
+    {
+      "index": 2,
+      "name": "頁籤",
+      "use": "章節分隔頁 (Section divider)",
+      "placeholders": {
+        "14": {
+          "role": "章節名",
+          "emu": [
+            1763688,
+            2802632,
+            6624736,
+            914400
+          ],
+          "size_pt": 44,
+          "color": "B82837"
+        }
+      }
+    },
+    {
+      "index": 3,
+      "name": "內頁1",
+      "use": "單標題內頁",
+      "placeholders": {
+        "13": {
+          "role": "主標",
+          "emu": [
+            539552,
+            332656,
+            6912768,
+            770384
+          ],
+          "size_pt": 40
+        },
+        "14": {
+          "role": "內文",
+          "emu": [
+            467544,
+            1628800,
+            8208144,
+            4537075
+          ],
+          "size_pt": 24
+        }
+      }
+    },
+    {
+      "index": 4,
+      "name": "內頁1-1",
+      "use": "主標+副標內頁（本專案主力版型）",
+      "placeholders": {
+        "13": {
+          "role": "主標",
+          "emu": [
+            539552,
+            260648,
+            6840760,
+            609600
+          ],
+          "size_pt": 36
+        },
+        "14": {
+          "role": "副標",
+          "emu": [
+            539552,
+            870248,
+            6840760,
+            381000
+          ],
+          "size_pt": 24,
+          "color": "C9A063"
+        },
+        "15": {
+          "role": "內文",
+          "emu": [
+            467544,
+            1628800,
+            8208144,
+            4537075
+          ],
+          "size_pt": 24
+        }
+      }
+    },
+    {
+      "index": 5,
+      "name": "內頁2",
+      "use": "單標題內頁（樣式變體2）",
+      "placeholders": {
+        "13": {
+          "role": "主標"
+        },
+        "14": {
+          "role": "內文"
+        }
+      }
+    },
+    {
+      "index": 6,
+      "name": "內頁2-1",
+      "use": "主標+副標（樣式變體2）",
+      "placeholders": {
+        "13": {
+          "role": "主標"
+        },
+        "14": {
+          "role": "副標"
+        },
+        "15": {
+          "role": "內文"
+        }
+      }
+    },
+    {
+      "index": 7,
+      "name": "內頁3",
+      "use": "單標題內頁（樣式變體3）",
+      "placeholders": {
+        "13": {
+          "role": "主標"
+        },
+        "14": {
+          "role": "內文"
+        }
+      }
+    },
+    {
+      "index": 8,
+      "name": "內頁3-1",
+      "use": "主標+副標（樣式變體3）",
+      "placeholders": {
+        "13": {
+          "role": "主標"
+        },
+        "14": {
+          "role": "副標"
+        },
+        "15": {
+          "role": "內文"
+        }
+      }
+    },
+    {
+      "index": 9,
+      "name": "空白內頁",
+      "use": "整頁圖表／全幅視覺（注意：版面含裝飾群組，置入圖表前需刪除）",
+      "placeholders": {
+        "14": {
+          "role": "內容",
+          "emu": [
+            467544,
+            548680,
+            8208144,
+            5617195
+          ]
+        }
+      }
+    },
+    {
+      "index": 10,
+      "name": "結尾",
+      "use": "結語／Q&A",
+      "placeholders": {
+        "14": {
+          "role": "結語文字",
+          "emu": [
+            1763688,
+            2802632,
+            6624736,
+            914400
+          ]
+        }
+      }
+    }
+  ],
+  "custom_elements": {
+    "source_line": {
+      "note": "模板無『資料來源』預留位置，需自行加 textbox",
+      "emu": [
+        467544,
+        6210000,
+        8208144,
+        300000
+      ],
+      "size_pt": 12,
+      "color": "939396",
+      "align": "left",
+      "format": "資料來源：{來源1}；{來源2}（檢索日期 {YYYY/MM/DD}）"
+    },
+    "page_number": {
+      "emu": [
+        6553200,
+        6356350,
+        2133600,
+        365125
+      ],
+      "note": "版面配置已內建 idx=12，沿用即可"
+    }
+  },
+  "content_area_bottom_emu": 6165875,
+  "gotchas": [
+    "模板檔內已存在 11 張示範投影片（每個版面各一張），建置腳本必須先全部刪除，再用 slide_layouts 新增。",
+    "python-pptx 無法刪除投影片，需用 xml_slides 操作：見規劃檔 §5.2 delete_all_slides()。",
+    "版面 9（空白內頁）帶一個裝飾用 GROUP shape，放圖表前要移除。",
+    "中文字型務必顯式設定 ea 字型為『微軟正黑體』，否則部分環境會 fallback 成新細明體。",
+    "4:3 版面，若要 16:9 需另跟簡報單位確認，勿自行改尺寸。"
+  ]
+}
