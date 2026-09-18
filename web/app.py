@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""最小上傳頁 —— 把書檔丟進 input/ 並跑完 Stage 1–2，顯示章節清單驗收表。
+"""控制台 —— 涵蓋 Stage 1–8 的網頁介面。
 
-其餘階段維持 CLI（Stage 3/4 需要模型驅動，不適合放進這頁）。
+Stage 3/4（深讀與研究）需要模型逐章讀書與上網查證，不是跑腳本就有結果，
+所以這頁只負責顯示逐章狀態與產生「貼到 Claude 對話視窗」的指令；
+Claude 與這頁讀寫同一個 work/ 資料夾，寫完檔案這裡輪詢就看得到。
 
     make web                       # 預設 http://127.0.0.1:5000
     python web/app.py --port 8080
@@ -23,9 +25,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from _common import (  # noqa: E402
-    ASSETS, CHAPTERS, CONFIG, INPUT, LAYOUT_FAMILIES, PAGES_JSONL, PROJECT_FILE,
-    RAW, TEMPLATE, chapter_files, format_timecode, load_project, parse_timecode,
-    parse_chapter_file,
+    ASSETS, CHAPTERS, CONFIG, DECK_JSON, DIGEST, EVIDENCE, INPUT, LAYOUT_FAMILIES,
+    OUTPUT, PAGES_JSONL, PROJECT_FILE, RAW, SCRIPT_JSON, TEMPLATE, chapter_files,
+    format_timecode, load_project, parse_timecode, parse_chapter_file, read_json,
+    target_slides,
 )
 
 from flask import Flask, jsonify, render_template, request, send_file  # noqa: E402
@@ -41,6 +44,9 @@ MAX_SHARE = 0.25
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_MB * 1024 * 1024
+# 本機工具，改完樣板不用重啟；Jinja 預設會把編譯結果快取在記憶體裡
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 
 
 def venv_python() -> str:
@@ -102,6 +108,119 @@ def current_state() -> dict:
         "ch_ids": [r["ch_id"] for r in rows],
     }
 
+
+
+
+# ==========================================================================
+# 全流程狀態
+# ==========================================================================
+# 這頁與對話視窗裡的 Claude 讀寫同一個資料夾，所以 Stage 3/4 不需要複製貼上：
+# Claude 把 work/03_digest/chNN.json 寫好，這裡輪詢就會看到。
+def _ch_meta() -> list[dict]:
+    out = []
+    for p in chapter_files():
+        meta, _ = parse_chapter_file(p)
+        out.append({"ch_id": meta.get("ch_id") or p.name.split("_")[0],
+                    "title": meta.get("title") or p.stem})
+    return out
+
+
+def _stage34_rows() -> list[dict]:
+    """逐章的深讀／研究狀態。壞掉的（schema 不合格）也要標出來。"""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import importlib.util
+
+    def _load(name, path):
+        spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / path)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    try:
+        d3 = _load("s03", "03_digest.py")
+        d4 = _load("s04", "04_research.py")
+    except Exception:                                  # noqa: BLE001
+        d3 = d4 = None
+
+    rows = []
+    for c in _ch_meta():
+        ch = c["ch_id"]
+        dp, ep = DIGEST / f"{ch}.json", EVIDENCE / f"{ch}.json"
+        row = {**c, "digest": "todo", "evidence": "todo",
+               "digest_errors": 0, "evidence_errors": 0}
+        if dp.exists():
+            errs = d3.validate_digest(dp, ch) if d3 else []
+            row["digest"] = "bad" if errs else "done"
+            row["digest_errors"] = len(errs)
+        if ep.exists():
+            errs = d4.validate_evidence(ep, ch) if d4 else []
+            row["evidence"] = "bad" if errs else "done"
+            row["evidence_errors"] = len(errs)
+        rows.append(row)
+    return rows
+
+
+def _outputs() -> list[dict]:
+    out = []
+    if OUTPUT.exists():
+        for p in sorted(OUTPUT.iterdir()):
+            if p.is_file() and p.suffix.lower() in (".pptx", ".docx", ".pdf", ".md"):
+                out.append({"name": p.name, "size_mb": round(p.stat().st_size / 1e6, 2),
+                            "mtime": int(p.stat().st_mtime)})
+    return out
+
+
+def pipeline_state() -> dict:
+    chs = _ch_meta()
+    rows = _stage34_rows() if chs else []
+    deck = None
+    if DECK_JSON.exists():
+        try:
+            d = read_json(DECK_JSON)
+            slides = d.get("slides", [])
+            todo = sum(1 for s in slides
+                       if "【待填】" in (str(s.get("title", "")) + str(s.get("subtitle", ""))
+                                       + str(s.get("body", ""))))
+            narr = sum(1 for s in slides if (s.get("narration") or "").strip())
+            total_sec = sum(int(s.get("duration_sec", 0)) for s in slides)
+            lo, hi = target_slides()
+            deck = {"slides": len(slides), "todo": todo, "narrated": narr,
+                    "total_sec": total_sec, "target": [lo, hi],
+                    "tone": d.get("meta", {}).get("tone", ""),
+                    "family": d.get("meta", {}).get("layout_family_label", "")}
+        except Exception:                              # noqa: BLE001
+            deck = {"error": True}
+
+    qa = None
+    qa_file = OUTPUT / "qa_report.md"
+    if qa_file.exists():
+        txt = qa_file.read_text(encoding="utf-8")
+        qa = {"markdown": txt,
+              "fail": txt.count("| **FAIL** |"),
+              "warn": txt.count("| **WARN** |"),
+              "skip": txt.count("| **SKIP** |"),
+              "pass": txt.count("| **PASS** |"),
+              "mtime": int(qa_file.stat().st_mtime)}
+
+    return {
+        "chapters": rows,
+        "digest_done": sum(1 for r in rows if r["digest"] == "done"),
+        "evidence_done": sum(1 for r in rows if r["evidence"] == "done"),
+        "deck": deck,
+        "qa": qa,
+        "outputs": _outputs(),
+    }
+
+
+# 可從網頁觸發的階段（Stage 3/4 不在此列——那是對話視窗裡的 Claude 的工作）
+RUNNABLE = {
+    "outline": ("05_outline.py", ["--force"]),
+    "pptx": ("06_build_pptx.py", []),
+    "script": ("07_build_script.py", []),
+    "qa": ("08_qa.py", ["--all"]),
+    "check_deck": ("08_qa.py", ["--check-deck"]),
+    "check_sources": ("08_qa.py", ["--check-sources"]),
+}
 
 
 # ==========================================================================
@@ -273,7 +392,8 @@ def layout_preview(family: int) -> bytes | None:
 @app.get("/")
 def index():
     return render_template("index.html", state=current_state(),
-                           settings=settings_payload(), max_mb=MAX_MB)
+                           settings=settings_payload(), pipeline=pipeline_state(),
+                           max_mb=MAX_MB)
 
 
 @app.get("/api/state")
@@ -389,6 +509,30 @@ def favicon():
     return send_file(BytesIO(px), mimetype="image/png")
 
 
+
+@app.get("/api/pipeline")
+def api_pipeline():
+    return jsonify(pipeline_state())
+
+
+@app.post("/api/run/<stage>")
+def api_run(stage: str):
+    if stage not in RUNNABLE:
+        return jsonify({"ok": False, "error": f"不認得的階段：{stage}"}), 400
+    script, args = RUNNABLE[stage]
+    step = run_stage(script, *args)
+    return jsonify({"ok": step["ok"], "steps": [step], "pipeline": pipeline_state()})
+
+
+@app.get("/api/download/<path:name>")
+def api_download(name: str):
+    # 只允許取 output/ 底下的檔案，擋掉 ../ 這種路徑
+    target = (OUTPUT / name).resolve()
+    if not str(target).startswith(str(OUTPUT.resolve())) or not target.is_file():
+        return jsonify({"ok": False, "error": "找不到檔案"}), 404
+    return send_file(str(target), as_attachment=True, download_name=target.name)
+
+
 @app.get("/api/ocr-report")
 def api_ocr_report():
     p = RAW / "ocr_confidence.md"
@@ -399,7 +543,7 @@ def api_ocr_report():
 
 # ==========================================================================
 def main() -> int:
-    ap = argparse.ArgumentParser(description="最小上傳頁（Stage 1–2）")
+    ap = argparse.ArgumentParser(description="控制台（Stage 1–8）")
     ap.add_argument("--host", default="127.0.0.1",
                     help="預設只綁本機；要讓別台電腦連才改 0.0.0.0")
     ap.add_argument("--port", type=int, default=5000)
@@ -409,8 +553,8 @@ def main() -> int:
     if args.host not in ("127.0.0.1", "localhost"):
         print(f"\n  ⚠  綁在 {args.host}，同網段的人都連得到。"
               "這頁沒有身分驗證，書檔有版權，請確認網段安全。\n")
-    print(f"  上傳頁 → http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{args.port}")
-    print("  Stage 3 之後請回終端機：python scripts/03_digest.py --next\n")
+    print(f"  控制台 → http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{args.port}")
+    print("  深讀與研究那兩段，頁面會給你一句指令貼到 Claude 對話視窗\n")
     app.run(host=args.host, port=args.port, debug=args.debug)
     return 0
 

@@ -13,19 +13,25 @@
 
 有兩種用法，設定與 Stage 1–2 可以走網頁，其餘階段一律在終端機。
 
-### A. 網頁（推薦給不想碰 CLI 的人）
+### A. 網頁控制台 + Claude 對話視窗（推薦）
 
 ```bash
 make setup           # 建 venv、裝套件、檢查環境
 make web             # → http://127.0.0.1:5000
 ```
 
-這頁可以設定書名講者、**預計長度**、**文案語氣**、**內頁色系（有預覽圖可挑）**、
-**現場要播的影片**，存檔後直接把書檔拖進去，它會跑完 Stage 1–2 並把章節清單
-攤開讓你確認（拆錯了可以在頁面上換策略重拆）。設定會寫進 `config/project.yaml`，
-註解不會被洗掉。
+**這頁是整條 pipeline 的控制台**，涵蓋 Stage 1–8：
 
-確認章節沒問題之後回終端機接 Stage 3。
+1. **設定** — 書名講者、預計長度、文案語氣、內頁色系（有預覽圖可挑）、現場要播的影片。
+   存進 `config/project.yaml`，註解不會被洗掉
+2. **上傳書檔** — 拖進去就跑完解析與拆章，章節清單攤開讓你確認（拆錯可換策略重拆）
+3. **深讀與研究** — 這兩段要模型讀書與上網查證，**頁面產一句指令給你貼到 Claude 對話視窗**。
+   Claude 跟這頁讀寫同一個資料夾，做完檔案就落地，頁面每 5 秒自動更新逐章進度
+4. **產出** — 按鈕跑藍圖、PPTX、逐字稿
+5. **品管與下載** — 跑九項檢查、頁面上看報告、直接下載 PPTX/DOCX（寄給同事就用這些）
+
+只有第 3 步需要離開頁面，因為那段是模型的工作，沒辦法用按鈕跑。
+文案潤飾與逐字稿同理——在對話視窗說「依 prompts/outline.md 潤飾 deck.json」即可。
 
 ### B. 純 CLI
 
@@ -94,13 +100,17 @@ python scripts/03_digest.py --status          # 看整體進度
 ├── work/                        # 中間檔，05_deck.json 是最重要的修改點
 ├── prompts/                     # digest / research / outline / narration
 ├── scripts/                     # 8 支 stage 腳本 + _common.py
-├── web/                         # 上傳頁（Flask，只管設定與 Stage 1–2）
+├── web/                         # 控制台（Flask，涵蓋 Stage 1–8）
 ├── tools/make_fixtures.py       # 合成測試資料，沒有真書也能驗證 pipeline
 └── output/                      # PPTX / DOCX / qa_report.md / preview
 ```
 
-上傳頁只綁 `127.0.0.1`。要讓別台電腦連才加 `--host 0.0.0.0`，
+控制台只綁 `127.0.0.1`。要讓別台電腦連才加 `--host 0.0.0.0`，
 但它沒有身分驗證、書檔有版權，請先確認網段安全。
+
+**為什麼 Stage 3/4 不做成按鈕**：那兩段要模型逐章讀完整章內容、用 WebSearch 查證，
+不是跑一支腳本就有結果。目前的做法是讓網頁管狀態與驗證、Claude 管內容，
+兩邊透過同一個 `work/` 資料夾交換，所以不需要複製貼上 JSON。
 
 ---
 
@@ -152,7 +162,7 @@ python scripts/03_digest.py --status          # 看整體進度
 | 工具 | 用途 | 安裝 |
 |---|---|---|
 | `tesseract` + `chi_tra` | 掃描版 PDF 的 OCR | `apt install tesseract-ocr tesseract-ocr-chi-tra` |
-| `flask` + `ruamel.yaml` | 上傳頁（純 CLI 可不裝） | 已列在 `requirements.txt` |
+| `flask` + `ruamel.yaml` | 控制台（純 CLI 可不裝） | 已列在 `requirements.txt` |
 | `qrcode` | 影片頁的 QR code | 已列在 `requirements.txt` |
 | `libreoffice-impress` | QA 預覽截圖 | `apt install libreoffice-impress` |
 | `pdftoppm` | PDF 轉 PNG（沒有會改用 pymupdf） | `apt install poppler-utils` |

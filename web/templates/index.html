@@ -110,17 +110,91 @@
     border-radius:10px; padding:13px 18px; display:flex; gap:12px; align-items:center;
     justify-content:space-between; box-shadow:0 -2px 14px rgba(0,0,0,.06); margin-top:20px}
   .savebar .msg{font-size:13px; color:var(--gray)}
+
+  /* ---- 全流程控制台 ---- */
+  .rail{display:flex; gap:6px; margin:0 0 24px; flex-wrap:wrap}
+  .rail a{flex:1 1 150px; min-width:0; text-decoration:none; color:var(--gray);
+    border:1px solid var(--line); background:var(--card); border-radius:8px;
+    padding:9px 12px; font-size:12.5px; transition:.12s}
+  .rail a:hover{border-color:var(--gray)}
+  .rail a .n{font-weight:600; color:var(--dark); display:block; font-size:13.5px}
+  .rail a .s{font-size:11.5px; display:block; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap}
+
+  .badge{display:inline-block; border-radius:5px; padding:2px 9px; font-size:11.5px;
+    font-weight:600; margin-left:9px; letter-spacing:0}
+  .b-done{background:rgba(46,125,50,.12); color:#2E7D32}
+  .b-todo{background:var(--line); color:var(--gray)}
+  .b-bad {background:rgba(184,40,55,.12); color:var(--red)}
+  .b-warn{background:rgba(178,106,0,.14); color:#B26A00}
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]) .b-done{background:rgba(102,187,106,.16); color:#81C784}
+    :root:not([data-theme="light"]) .b-warn{background:rgba(255,183,77,.16); color:#FFB74D}
+  }
+
+  .chgrid{display:grid; grid-template-columns:auto minmax(0,1fr) auto auto;
+    font-size:13.5px; align-items:center; border:1px solid var(--line);
+    border-radius:8px; overflow:hidden}
+  .chgrid > div{padding:8px 11px; border-bottom:1px solid var(--line); min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .chgrid > div:nth-last-child(-n+4){border-bottom:0}
+  .chgrid .hd{color:var(--gray); font-size:12px; font-weight:600; background:var(--soft)}
+  .dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px}
+  .d-done{background:#2E7D32} .d-todo{background:var(--gray); opacity:.35}
+  .d-bad{background:var(--red)}
+
+  .todo-box{border-left:3px solid var(--red); background:var(--soft);
+    border-radius:0 8px 8px 0; padding:14px 16px; margin-top:16px}
+  .todo-box.ok{border-left-color:#2E7D32}
+  .todo-box .lbl{font-size:12px; color:var(--gray); margin-bottom:7px}
+  .todo-box .cmdtext{background:var(--card); border:1px solid var(--line);
+    border-radius:6px; padding:10px 12px; font-size:13.5px; line-height:1.6;
+    margin-bottom:10px; word-break:break-word}
+
+  .files{display:grid; gap:8px}
+  .file{display:flex; align-items:center; gap:12px; border:1px solid var(--line);
+    border-radius:8px; padding:11px 14px; background:var(--soft)}
+  .file .nm{flex:1; min-width:0; font-size:13.5px; word-break:break-all}
+  .file .sz{font-size:12px; color:var(--gray); white-space:nowrap}
+  .file a.btn{text-decoration:none; white-space:nowrap}
+
+  .qabar{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px}
+  .qabar .badge{margin-left:0}
+  details.qa{border:1px solid var(--line); border-radius:8px; overflow:hidden}
+  details.qa summary{cursor:pointer; padding:11px 14px; font-size:13.5px;
+    background:var(--soft); user-select:none}
+  details.qa pre{margin:0; max-height:420px; overflow:auto; border:0;
+    border-top:1px solid var(--line); border-radius:0}
+
+  /* 章節表 6 欄在手機上塞不下，讓它在自己的容器內橫捲，不要撐破整頁 */
+  #tableBox{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  #tableBox table{min-width:420px}
+
+  @media (max-width:520px){
+    .chgrid{font-size:12.5px}
+    .chgrid > div{padding:7px 8px}
+    .rail a{flex:1 1 100%}
+    .file{flex-wrap:wrap}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <h1>簡報設定 <span>·</span> 復華專業書分享</h1>
-  <p class="sub">設定好之後上傳書檔，這頁會跑完 Stage 1–2 並把章節清單攤開給你確認。
-     Stage 3 之後回終端機跑。</p>
+  <p class="sub">這頁是整條 pipeline 的控制台。需要模型讀書與上網查證的兩段，
+     在你的 Claude 對話視窗執行——它跟這頁讀寫同一個資料夾，做完這裡自動看得到。</p>
+
+  <div class="rail" id="rail">
+    <a href="#c-setup"><span class="n">設定</span><span class="s" id="r1">書名・長度・語氣・色系</span></a>
+    <a href="#c-book"><span class="n">書檔與章節</span><span class="s" id="r2">上傳・拆章</span></a>
+    <a href="#c-model"><span class="n">深讀與研究</span><span class="s" id="r3">在對話視窗執行</span></a>
+    <a href="#c-build"><span class="n">產出</span><span class="s" id="r4">藍圖・PPTX・逐字稿</span></a>
+    <a href="#c-qa"><span class="n">品管與下載</span><span class="s" id="r5">九項檢查</span></a>
+  </div>
 
   <!-- 1 書本資訊 -->
-  <div class="card">
+  <div class="card" id="c-setup">
     <h2><b>1</b>書本與講者</h2>
     <div class="grid">
       <div><label class="f">中文書名</label><input type="text" id="title_zh"></div>
@@ -175,7 +249,7 @@
   </div>
 
   <!-- 6 上傳 -->
-  <div class="card" style="margin-top:26px">
+  <div class="card" id="c-book" style="margin-top:26px">
     <h2><b>6</b>放書檔進來</h2>
     <div id="drop">
       <div class="big">把書檔拖進來，或點一下選檔</div>
@@ -212,9 +286,64 @@
       <span style="color:var(--gray);font-size:13px">章</span>
     </div>
     <div class="next">
-      <div style="font-size:13px;color:var(--gray)">確認沒問題就回終端機接 Stage 3：</div>
-      <code>python scripts/03_digest.py --next</code>
+      <div style="font-size:13px;color:var(--gray)">章節確認沒問題，就往下看第 9 段「深讀與研究」。</div>
     </div>
+  </div>
+
+
+  <!-- 9 深讀與研究 -->
+  <div class="card hidden" id="c-model">
+    <h2><b>9</b>深讀與研究<span class="badge b-todo" id="bg-model">尚未開始</span></h2>
+    <p class="note" style="margin:0 0 14px">
+      這兩段要模型逐章讀書、上網查證，沒辦法用按鈕跑。
+      <b>複製下面那句貼到你的 Claude 對話視窗</b>，它做完會把檔案寫進
+      <code>work/03_digest/</code> 與 <code>work/04_evidence/</code>，這頁每 5 秒自動更新。
+    </p>
+
+    <div class="chgrid" id="chgrid"></div>
+
+    <div class="todo-box" id="todoBox">
+      <div class="lbl">下一步——複製這句貼到對話視窗</div>
+      <div class="cmdtext" id="todoCmd"></div>
+      <div class="row">
+        <button class="btn primary sm" id="copyCmd">複製</button>
+        <button class="btn sm" id="refreshNow">立即更新</button>
+        <span class="note" style="margin:0" id="autoNote">自動更新中</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 10 產出 -->
+  <div class="card hidden" id="c-build">
+    <h2><b>10</b>產出<span class="badge b-todo" id="bg-build">尚未開始</span></h2>
+    <div class="note" id="deckInfo" style="margin:0 0 14px"></div>
+    <div class="row">
+      <button class="btn" data-run="outline">① 產藍圖 deck.json</button>
+      <button class="btn" data-run="pptx">② 產 PPTX</button>
+      <button class="btn" data-run="script">③ 產逐字稿 DOCX</button>
+      <button class="btn sm" data-run="check_deck">只驗文案規則</button>
+    </div>
+    <div class="note" style="margin-top:12px">
+      藍圖產好之後，文案潤飾與逐字稿一樣是模型的工作——在對話視窗說
+      「依 prompts/outline.md 潤飾 deck.json」與「依 prompts/narration.md 寫逐字稿」。
+      改完再按 ② ③ 重出，前面的階段不用重跑。
+    </div>
+    <div id="buildLogBox" class="hidden"><pre class="log" id="buildLog"></pre></div>
+  </div>
+
+  <!-- 11 品管與下載 -->
+  <div class="card hidden" id="c-qa">
+    <h2><b>11</b>品管與下載<span class="badge b-todo" id="bg-qa">尚未跑</span></h2>
+    <div class="row" style="margin-bottom:14px">
+      <button class="btn primary" data-run="qa">跑九項品管檢查</button>
+      <button class="btn sm" data-run="check_sources">只驗外部連結</button>
+    </div>
+    <div class="qabar hidden" id="qabar"></div>
+    <details class="qa hidden" id="qaDetails">
+      <summary>展開完整 QA 報告</summary>
+      <pre class="log" id="qaReport"></pre>
+    </details>
+    <div id="filesBox" style="margin-top:16px"></div>
   </div>
 
 </div>
@@ -362,7 +491,7 @@ async function upload(f){
     const j = await r.json();
     if(!j.ok && j.error){ note(esc(j.error), true); return; }
     showSteps(j.steps); note(j.ok ? '解析完成' : '解析過程有錯，看下面的輸出', !j.ok);
-    render(j.state);
+    render(j.state); loadPipeline();
   }catch(e){ note('上傳失敗：'+esc(String(e)), true); }
 }
 function showSteps(steps){
@@ -379,7 +508,7 @@ document.querySelectorAll('[data-mode]').forEach(b => b.onclick = async () => {
   note('<span class="spin"></span>重新拆章中…');
   const j = await post('/api/resplit',{mode:b.dataset.mode,n:+$('#splitN').value});
   if(!j.ok && j.error){ note(esc(j.error), true); return; }
-  showSteps(j.steps); note('重拆完成'); render(j.state);
+  showSteps(j.steps); note('重拆完成'); render(j.state); loadPipeline();
 });
 $('#btnReset').onclick = async () => {
   if(!confirm('會刪掉 input/ 的書檔與 work/01_raw、work/02_chapters 的中間檔，確定？')) return;
@@ -435,6 +564,140 @@ function render(s){
 function esc(s){ const d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
 
 fillForm(); render(ST); $('#save').disabled = true;
+
+/* ================= 全流程控制台 ================= */
+let PL = {{ pipeline|tojson }};
+let pollTimer = null;
+
+function badge(el, cls, text){
+  const b = $(el); b.className = 'badge ' + cls; b.textContent = text;
+}
+
+async function loadPipeline(){
+  try{ PL = await (await fetch('/api/pipeline')).json(); renderPipeline(); }
+  catch(e){ /* 網頁關掉或伺服器重啟，靜默略過 */ }
+}
+
+function renderPipeline(){
+  const chs = PL.chapters || [];
+  const hasCh = chs.length > 0;
+  $('#c-model').classList.toggle('hidden', !hasCh);
+  $('#c-build').classList.toggle('hidden', !hasCh);
+  $('#c-qa').classList.toggle('hidden', !(PL.deck || PL.qa || (PL.outputs||[]).length));
+
+  /* --- 逐章 3/4 --- */
+  if(hasCh){
+    const st = k => k==='done' ? 'd-done' : (k==='bad' ? 'd-bad' : 'd-todo');
+    const tx = (k,n) => k==='done' ? '完成' : (k==='bad' ? `${n} 項不合格` : '未處理');
+    $('#chgrid').innerHTML =
+      `<div class="hd">章節</div><div class="hd"></div>
+       <div class="hd">深讀</div><div class="hd">研究</div>` +
+      chs.map(c => `
+        <div>${c.ch_id}</div>
+        <div style="color:var(--gray)">${esc(c.title).slice(0,28)}</div>
+        <div><span class="dot ${st(c.digest)}"></span>${tx(c.digest,c.digest_errors)}</div>
+        <div><span class="dot ${st(c.evidence)}"></span>${tx(c.evidence,c.evidence_errors)}</div>
+      `).join('');
+
+    const dd = PL.digest_done, ed = PL.evidence_done, n = chs.length;
+    if(dd===n && ed===n) badge('#bg-model','b-done',`兩段都完成（${n} 章）`);
+    else badge('#bg-model','b-warn',`深讀 ${dd}/${n}・研究 ${ed}/${n}`);
+
+    /* 下一步指令 */
+    const badD = chs.find(c=>c.digest==='bad'), badE = chs.find(c=>c.evidence==='bad');
+    const nextD = chs.find(c=>c.digest==='todo');
+    const nextE = chs.find(c=>c.digest==='done' && c.evidence==='todo');
+    const box = $('#todoBox'); box.classList.remove('ok');
+    let cmd;
+    if(badD)       cmd = `${badD.ch_id} 的深讀沒通過驗證（${badD.digest_errors} 項），請依 prompts/digest.md 的品質底線重寫 work/03_digest/${badD.ch_id}.json`;
+    else if(nextD) cmd = `請依 prompts/digest.md 跑 ${nextD.ch_id} 的深讀，寫入 work/03_digest/${nextD.ch_id}.json，完成後驗證`;
+    else if(badE)  cmd = `${badE.ch_id} 的研究沒通過驗證（${badE.evidence_errors} 項），請依 prompts/research.md 的硬性規則修正 work/04_evidence/${badE.ch_id}.json`;
+    else if(nextE) cmd = `請依 prompts/research.md 跑 ${nextE.ch_id} 的外部研究（用 WebSearch 查證並補台灣市場對照），寫入 work/04_evidence/${nextE.ch_id}.json`;
+    else { cmd = '兩段都完成了，可以往下產藍圖。'; box.classList.add('ok'); }
+    $('#todoCmd').textContent = cmd;
+  }
+
+  /* --- 產出 --- */
+  const d = PL.deck;
+  if(d && !d.error){
+    const m = Math.floor(d.total_sec/60), sec = String(d.total_sec%60).padStart(2,'0');
+    $('#deckInfo').innerHTML =
+      `藍圖 <b>${d.slides}</b> 頁（目標 ${d.target[0]}–${d.target[1]}）・預估 <b>${m}:${sec}</b>`
+      + (d.family?` ・色系 <b>${esc(d.family)}</b>`:'')
+      + (d.tone?` ・語氣 <b>${esc(d.tone)}</b>`:'')
+      + `<br>${d.todo? `<span style="color:var(--red)">${d.todo} 頁還有【待填】，需要潤飾</span>`:'文案沒有【待填】'}`
+      + ` ・逐字稿 ${d.narrated}/${d.slides} 頁`;
+    if(d.todo || d.narrated < d.slides) badge('#bg-build','b-warn','藍圖已產，待潤飾');
+    else badge('#bg-build','b-done','藍圖完成');
+  }else{
+    $('#deckInfo').textContent = '還沒有藍圖。深讀與研究做完之後，按「① 產藍圖」。';
+    badge('#bg-build','b-todo','尚未開始');
+  }
+
+  /* --- QA --- */
+  const q = PL.qa;
+  if(q){
+    $('#qabar').classList.remove('hidden');
+    $('#qabar').innerHTML =
+      `<span class="b-done badge" style="margin:0">PASS ${q.pass}</span>` +
+      (q.warn?`<span class="b-warn badge" style="margin:0">WARN ${q.warn}</span>`:'') +
+      (q.skip?`<span class="b-todo badge" style="margin:0">SKIP ${q.skip}</span>`:'') +
+      (q.fail?`<span class="b-bad badge" style="margin:0">FAIL ${q.fail}</span>`:'');
+    $('#qaDetails').classList.remove('hidden');
+    $('#qaReport').textContent = q.markdown;
+    if(q.fail) badge('#bg-qa','b-bad',`${q.fail} 項 FAIL，不可交付`);
+    else badge('#bg-qa','b-done','可以交付');
+  }else badge('#bg-qa','b-todo','尚未跑');
+
+  /* --- 產出檔 --- */
+  const files = PL.outputs || [];
+  $('#filesBox').innerHTML = files.length
+    ? `<div class="note" style="margin:0 0 9px">產出檔（點檔名下載，寄給同事就用這些）</div>
+       <div class="files">` + files.map(f=>`
+        <div class="file"><span class="nm">${esc(f.name)}</span>
+          <span class="sz">${f.size_mb} MB</span>
+          <a class="btn sm" href="/api/download/${encodeURIComponent(f.name)}">下載</a></div>`).join('')
+      + `</div>`
+    : '';
+}
+
+$('#copyCmd').onclick = async () => {
+  const t = $('#todoCmd').textContent;
+  try{ await navigator.clipboard.writeText(t); $('#copyCmd').textContent = '已複製'; }
+  catch(e){ const r=document.createRange(); r.selectNode($('#todoCmd'));
+            getSelection().removeAllRanges(); getSelection().addRange(r);
+            $('#copyCmd').textContent = '請按 Cmd+C'; }
+  setTimeout(()=>$('#copyCmd').textContent='複製', 1800);
+};
+$('#refreshNow').onclick = loadPipeline;
+
+document.querySelectorAll('[data-run]').forEach(b => b.onclick = async () => {
+  const stage = b.dataset.run, old = b.textContent;
+  document.querySelectorAll('[data-run]').forEach(x=>x.disabled=true);
+  b.innerHTML = '<span class="spin"></span>執行中…';
+  try{
+    const j = await post('/api/run/'+stage);
+    $('#buildLogBox').classList.remove('hidden');
+    $('#buildLog').textContent = (j.steps||[]).map(s=>`$ python scripts/${s.cmd}\n${s.output}`).join('\n\n');
+    if(j.pipeline){ PL = j.pipeline; renderPipeline(); }
+  }catch(e){
+    $('#buildLogBox').classList.remove('hidden');
+    $('#buildLog').textContent = '執行失敗：' + e;
+  }finally{
+    document.querySelectorAll('[data-run]').forEach(x=>x.disabled=false);
+    b.textContent = old;
+  }
+});
+
+/* 對話視窗裡的 Claude 寫檔之後，這頁靠輪詢反映出來 */
+function startPolling(){
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(() => { if(!document.hidden) loadPipeline(); }, 5000);
+}
+document.addEventListener('visibilitychange', () => { if(!document.hidden) loadPipeline(); });
+
+renderPipeline(); startPolling();
+
 </script>
 </body>
 </html>
