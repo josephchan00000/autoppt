@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
     BODY_STYLES, CHAIN_GLYPHS, DECK_JSON, OUTPUT, TEMPLATE, die, ensure_dirs, estimate_lines,
     format_timecode, info, limits, load_project, load_spec, ok, read_json, safe_filename,
-    step, visual_len, warn,
+    step, visual_len, warn, stop,
 )
 
 from pptx import Presentation  # noqa: E402
@@ -36,6 +36,7 @@ from pptx.dml.color import RGBColor  # noqa: E402
 from pptx.oxml.ns import qn  # noqa: E402
 from pptx.util import Emu, Pt  # noqa: E402
 from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR  # noqa: E402
+from pptx.enum.dml import MSO_LINE  # noqa: E402
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR  # noqa: E402
 
 EA_FONT = "微軟正黑體"
@@ -264,6 +265,51 @@ def tidy_deck(node):
     if isinstance(node, dict):
         return {k: (v if k in ("url", "path") else tidy_deck(v)) for k, v in node.items()}
     return node
+
+
+IMG_SLOT = (5990000, 2010000, 2520000, 2750000)   # 章名頁籤右側的直式空白區（EMU）
+
+
+def draw_image_slot(slide, hint: dict) -> None:
+    """在章名頁籤右側畫一個虛線佔位框，裡面寫「該去搜什麼圖」。
+
+    使用者拿到檔案之後把框刪掉、換成自己找到的圖就好；
+    完整清單另外出在 output/圖片建議.md（tools/image_suggestions.py）。
+    """
+    if not hint:
+        return
+    left, top, w, h = IMG_SLOT
+    box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(left), Emu(top), Emu(w), Emu(h))
+    box.name = "ImageSlot"
+    box.fill.solid()
+    box.fill.fore_color.rgb = RGBColor.from_string("FFFFFF")
+    box.line.color.rgb = RGBColor.from_string("BFBFBF")
+    box.line.width = Pt(1)
+    box.line.dash_style = MSO_LINE.DASH
+    box.shadow.inherit = False
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    tf.margin_left = tf.margin_right = Emu(120000)
+    lines = [("【這裡放一張圖】", 13, FLOW_LINE, True),
+             (hint.get("what", ""), 12, FLOW_TEXT, False),
+             ("搜尋　" + (hint.get("keywords_zh") or ""), 11, FLOW_NOTE, False)]
+    if hint.get("keywords_en"):
+        lines.append((hint["keywords_en"], 11, FLOW_NOTE, False))
+    if hint.get("source"):
+        lines.append((hint["source"], 9, FLOW_NOTE, False))
+    for i, (txt, sz, col, bold) in enumerate(lines):
+        par = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        par.alignment = PP_ALIGN.CENTER
+        _bu_none(par)
+        if i == 0:
+            par.space_after = Pt(6)
+        r = par.add_run()
+        r.text = txt
+        r.font.size = Pt(sz)
+        r.font.bold = bold
+        r.font.color.rgb = RGBColor.from_string(col)
+        set_ea_font(r, EA_FONT)
 
 
 def placeholder_box(slide, idx: int):
@@ -1108,6 +1154,8 @@ def main() -> int:
     print()
     info("下一步：python scripts/07_build_script.py（逐字稿）")
     info("        python scripts/08_qa.py --all（品管）")
+    stop("版面看起來對嗎？", "PDF 直接翻（PPT 換台電腦容易跑版）",
+         "python scripts/07_build_script.py && python scripts/08_qa.py --all")
     return 0
 
 
@@ -1183,10 +1231,17 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
         ph = SPEC["layouts"][2]["placeholders"]["14"]
         set_ph(s, 14, title, size_pt=ph["size_pt"], color=ph["color"])
         note = (spec.get("note") or "").strip()
+        left, top, w, h = SPEC["layouts"][2]["placeholders"]["14"]["emu"]
+        if spec.get("image_hint"):
+            # 右側要放圖，主標框先讓位，否則長章名會折行蓋到佔位框上
+            w = IMG_SLOT[0] - left - 180000
+            s.placeholders[14].width = Emu(w)
         if note:
-            # 章名用官方中譯時，把「第 N 章｜英文原章名」放在主標下方一行，聽眾追得回原書
-            left, top, w, h = [Emu(v) for v in SPEC["layouts"][2]["placeholders"]["14"]["emu"]]
-            tb = s.shapes.add_textbox(left, Emu(top + h + 100000), w, Emu(520000))
+            # 章名用官方中譯時，把「第 N 章｜英文原章名」放在主標下方一行，聽眾追得回原書；
+            # 章名折行時要跟著往下移，不然會疊在第二行上
+            n_lines = wrapped_lines(title, w, int(ph.get("size_pt", 44)))
+            note_top = top + max(h, n_lines * line_height_emu(int(ph.get("size_pt", 44)))) + 60000
+            tb = s.shapes.add_textbox(Emu(left), Emu(int(note_top)), Emu(w), Emu(520000))
             tb.name = "DividerNote"
             tf = tb.text_frame
             tf.word_wrap = True
@@ -1195,6 +1250,8 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
             r.font.size = Pt(18)
             r.font.color.rgb = RGBColor.from_string("939396")
             set_ea_font(r, EA_FONT)
+        if spec.get("image_hint"):
+            draw_image_slot(s, spec["image_hint"])
         remove_empty_placeholders(s)
         set_notes(s, narration)
         return {"count": 1, "split": 0, "charts": 0}

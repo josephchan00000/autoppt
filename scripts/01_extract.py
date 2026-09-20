@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
     PAGES_JSONL, RAW, TOC_JSON, die, ensure_dirs, have_cmd, info, ok, step, warn,
-    write_json, write_jsonl,
+    write_json, write_jsonl, stop,
 )
 
 # 幾乎抽不到字就判定為掃描版
@@ -343,6 +343,8 @@ def main() -> int:
 
     print()
     info("下一步：python scripts/02_split_chapters.py")
+    stop("解析結果對不對？", "總頁數與抽出字數；掃描版要看 work/01_raw/ocr_confidence.md",
+         "python scripts/02_split_chapters.py")
     return 0
 
 

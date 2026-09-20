@@ -68,6 +68,21 @@ def step(msg: str) -> None:
     print(_c("1;36", f"\n▶ {msg}"))
 
 
+def stop(confirm: str, show: str = "", nxt: str = "") -> None:
+    """每一個階段結束時印同一個樣子的停點。
+
+    使用者的要求：「引導 AI 一步一步執行，每一步都要跟使用者確認再往下一步」。
+    所以每支 script 跑完都要印這一段，AI 看到就知道該停下來問，不要一路跑到底。
+    """
+    print()
+    print(_c("33;1", f"  ✋ 停：{confirm}"))
+    if show:
+        print(_c("33", f"     給他看：{show}"))
+    if nxt:
+        print(_c("33", f"     他說 OK 再跑：{nxt}"))
+    print()
+
+
 def die(msg: str, code: int = 1) -> "NoReturn":  # type: ignore[valid-type]
     fail(msg)
     sys.exit(code)

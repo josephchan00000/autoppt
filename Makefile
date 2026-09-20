@@ -1,5 +1,6 @@
 # ===========================================================================
 # 復華風格「專業書分享」簡報自動化 pipeline
+#   make next     ← 不知道現在該做什麼就先跑這個（印進度與下一步）
 #   make setup    建虛擬環境、裝套件、檢查母片與外部工具
 #   make check    只檢查環境（不安裝）
 #   make extract  Stage 1   BOOK=input/book.pdf
@@ -10,7 +11,9 @@
 #   make outline  Stage 5b  由 guide.json 產藍圖 work/05_deck.json
 #   make build    Stage 6+7 產 PPTX + 逐字稿 DOCX
 #   make qa       Stage 8   自動品管
+#   make images   匯出圖片建議清單 output/圖片建議.md
 #   make revise   改稿迴圈：改完 deck.json 後重跑 6→8
+#   make deliver  產出 + 圖片建議 + 品管，一次跑完交付前的最後三步
 # ===========================================================================
 
 PY      := .venv/bin/python
@@ -18,11 +21,18 @@ PIP     := .venv/bin/pip
 BOOK    ?= $(firstword $(wildcard input/book.* input/*.pdf input/*.epub input/*.mobi))
 
 .DEFAULT_GOAL := help
-.PHONY: help setup check extract split digest research guide outline build pptx script qa \
-        revise preview check-sources clean-work clean-output distclean
+.PHONY: help next setup check extract split digest research guide outline build pptx script qa \
+        images deliver revise preview check-sources clean-work clean-output distclean
 
 help:
 	@grep -E '^#   make' Makefile | sed 's/^#   /  /'
+
+# --- 不知道現在在哪一步就跑這個 -------------------------------------------
+next:
+	@$(PY) scripts/00_next.py
+
+progress:
+	@$(PY) scripts/00_next.py --all
 
 # --- Stage 0 --------------------------------------------------------------
 setup:
@@ -81,8 +91,15 @@ qa:
 preview:
 	$(PY) scripts/08_qa.py --preview
 
+images:
+	$(PY) tools/image_suggestions.py
+
 # 改稿迴圈：改完 work/05_deck.json 之後跑這個，不要重跑前面的階段
 revise: build qa
+
+# 交付前的最後三步
+deliver: build images qa
+	@$(PY) scripts/00_next.py
 
 # --- 清理 -----------------------------------------------------------------
 clean-work:

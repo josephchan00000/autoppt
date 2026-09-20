@@ -57,6 +57,7 @@ ALLOWED_CUSTOM_SHAPES = {
     "SplitBox", "SplitHeader", "SplitBody", "SplitCaption", "DividerNote",
     # 卡片式文字頁（06_build_pptx.draw_cards）
     "CardBox", "CardChip", "CardNum", "CardLink", "CardText", "ProseBar", "ProseText",
+    "ImageSlot",
 }
 EA_EXPECT = "微軟正黑體"
 

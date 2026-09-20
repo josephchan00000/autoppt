@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
     DECK_JSON, DIGEST, OUTPUT, SCRIPT_JSON, die, ensure_dirs, info, is_appendix,
     load_project, narration_chars, ok, read_json, safe_filename, step, talk_minutes_range,
-    talk_slides, warn, write_json,
+    talk_slides, warn, write_json, stop,
 )
 
 from docx import Document  # noqa: E402
@@ -129,6 +129,8 @@ def main() -> int:
              "移到附錄，或 python tools/repace_deck.py 重新配速）")
     print()
     info("下一步：python scripts/08_qa.py --all")
+    stop("逐字稿的語氣對嗎？", "開場三頁與任一章的逐字稿",
+         "python scripts/08_qa.py --all")
     return 0
 
 

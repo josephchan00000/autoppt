@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
     CHAPTERS, PAGES_JSONL, TOC_JSON, _c, die, ensure_dirs, fail, info, ok,
-    read_json, read_jsonl, safe_filename, step, warn,
+    read_json, read_jsonl, safe_filename, step, warn, stop,
 )
 
 # 規劃書 §4.2 的章節標題正規式
@@ -332,8 +332,9 @@ def print_table(written: list[dict], pages: list[dict]) -> None:
         ok("字數分布正常，沒有明顯拆錯的章節")
 
     print()
-    info("→ 停：請確認上面的章節清單。確認後才往下走 Stage 3。")
-    info("   下一步：python scripts/03_digest.py --next")
+    stop("章節拆對了嗎？字數異常（紅字）代表拆錯",
+         "上面的章節清單表格；要換策略就用 --force-regex / --force-split N，或直接手改 md",
+         "python scripts/04_research.py --author（先查作者與官方章名）")
 
 
 if __name__ == "__main__":

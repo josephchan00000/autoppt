@@ -570,10 +570,11 @@ def build_slides(guide: dict, chapters: list[dict], cfg: dict, author: dict) -> 
               title=pt, duration_sec=15)
 
         note = " ".join(x for x in (c["no_label"], c["title_en"] if c["display"] != c["title_en"] else "") if x)
-        S(layout=L_DIVIDER, kind="divider", role="divider", section=cid, ch_id=cid,
-          title=c["display"], note=note or None, duration_sec=15)
-
         story = (d.get("stories") or [])[g["story"]]
+        S(layout=L_DIVIDER, kind="divider", role="divider", section=cid, ch_id=cid,
+          title=c["display"], note=note or None, duration_sec=15,
+          image_hint=story_image_hint(story, c))
+
         src_label = chapter_source_label(c, _page_ref(d), book_label)
         S(layout=L_MAIN, kind="content", role="outline", section=cid, ch_id=cid, style="chain",
           title=g["headline"],
@@ -668,6 +669,34 @@ def build_slides(guide: dict, chapters: list[dict], cfg: dict, author: dict) -> 
 def _chapter_no(title: str) -> str:
     m = re.match(r"^\s*(?:第\s*)?([0-9]+)\s*[章:：.．\-—]", (title or "").strip())
     return str(int(m.group(1))) if m else ""
+
+
+# 人名可能帶重音（Frédéric），不能只吃 A-Za-z，否則會被切成「Fr」
+_LATIN_NAME = re.compile(r"[A-ZÀ-Þ][A-Za-zÀ-ÿ.'\-]{2,}(?:\s+[A-ZÀ-Þ][A-Za-zÀ-ÿ.'\-]{2,})*")
+
+
+def story_image_hint(story: dict, chapter: dict) -> dict:
+    """由這一章選的故事，直接組出「該去搜什麼圖」。
+
+    使用者的需求是「建議搜尋什麼圖片放上去讓我們可以去加工」，
+    所以關鍵字要能直接貼進搜尋框：中文一組、英文一組，再標建議來源。
+    圖檔本身不抓——雲端的對外連線是白名單，機構網站幾乎全被擋。
+    """
+    who = (story.get("who") or "").strip()
+    where = (story.get("where") or "").strip()
+    when = (story.get("when") or "").strip()
+    en_names = [x for x in _LATIN_NAME.findall(who + " " + (story.get("what") or ""))
+                if len(x) >= 4]
+    en = " ".join(dict.fromkeys(en_names[:2])) or (chapter.get("title_en") or "")
+    zh_who = re.split(r"[（(]", who, 1)[0].strip()
+    zh_where = re.split(r"[，,]", where, 1)[0].strip()
+    return {
+        "what": f"{zh_who}｜{where}｜{when}".strip("｜"),
+        "keywords_zh": "、".join(x for x in (zh_who, zh_where, when) if x),
+        "keywords_en": (f"{en} historical photograph" if en else "").strip(),
+        "source": "Wikimedia Commons（先看授權）／機構官網／圖書館數位典藏",
+        "use": "章名頁籤右側，開場講故事時的背景圖",
+    }
 
 
 def _author_slides(S, author: dict, author_name: str, L_MAIN: int, L_BLANK: int) -> None:
