@@ -177,18 +177,14 @@ def _cover(doc: Document, meta: dict, slides: list[dict], cfg: dict) -> None:
     doc.add_page_break()
 
 
-def _section_of(s: dict, act_claims: dict[str, str]) -> str | None:
-    """這一頁屬於哪一節。None = 沿用上一節（例如沒掛幕的影片頁）。"""
-    if s.get("act") and s["act"] in act_claims:
-        return act_claims[s["act"]]
-    role = s.get("role")
-    if role in ("cover", "summary", "map"):
-        return "序幕"
-    if role == "counter":
-        return "反方"
-    if role == "closing":
-        return "結語"
-    return None
+def _section_of(s: dict, ch_names: dict[str, str]) -> str | None:
+    """這一頁屬於哪一節。None = 沿用上一節（例如沒掛章的影片頁）。"""
+    sec = s.get("section")
+    if sec in ch_names:
+        return ch_names[sec]
+    if sec == "part":
+        return s.get("title") or None
+    return {"prologue": "序幕", "implication": "全書意涵", "counter": "反方", "closing": "結語"}.get(sec)
 
 
 def _slide_row(doc: Document, label: str, s: dict, narration: str) -> None:
@@ -240,14 +236,19 @@ def _visual_label(s: dict) -> str:
 
 
 def _body(doc: Document, meta: dict, slides: list[dict]) -> dict:
-    act_claims = {a["id"]: a["claim"] for a in (meta.get("structure") or {}).get("acts") or []}
+    ch_names: dict[str, str] = {}
+    for c in meta.get("chapters") or []:
+        disp = c.get("display") or c.get("title") or c["ch_id"]
+        en = c.get("title_en") or ""
+        head = f"{c.get('no_label', '')} {disp}".strip()
+        ch_names[c["ch_id"]] = f"{head}（{en}）" if en and en != disp else head
     talk = talk_slides(slides)
     appendix = [s for s in slides if is_appendix(s)]
     cum = empty = chars = 0
     cur_section: str | None = None
 
     for i, s in enumerate(talk, start=1):
-        section = _section_of(s, act_claims)
+        section = _section_of(s, ch_names)
         if section and section != cur_section:
             if cur_section is not None:
                 doc.add_page_break()
@@ -264,6 +265,8 @@ def _body(doc: Document, meta: dict, slides: list[dict]) -> dict:
 
         para(doc, f"第 {i} 頁 / 累計 {mmss(cum)} ／ 本頁 {dur} 秒", size=9, color=FH_GRAY, space_after=2)
         _slide_row(doc, f"P{i}", s, narration)
+        if s.get("story_hint"):
+            para(doc, f"【本章故事，開場用】{s['story_hint']}", size=9, color=FH_GRAY, space_after=8)
         cum += dur
 
     if appendix:

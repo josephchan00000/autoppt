@@ -879,11 +879,24 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
         set_notes(s, narration)
         return {"count": 1, "split": 0, "charts": 0}
 
-    # ---- 章節頁籤 ----
+    # ---- 章名／分部頁籤 ----
     if kind == "divider":
         s = add(prs, layout)
         ph = SPEC["layouts"][2]["placeholders"]["14"]
         set_ph(s, 14, title, size_pt=ph["size_pt"], color=ph["color"])
+        note = (spec.get("note") or "").strip()
+        if note:
+            # 章名用官方中譯時，把「第 N 章｜英文原章名」放在主標下方一行，聽眾追得回原書
+            left, top, w, h = [Emu(v) for v in SPEC["layouts"][2]["placeholders"]["14"]["emu"]]
+            tb = s.shapes.add_textbox(left, Emu(top + h + 100000), w, Emu(520000))
+            tb.name = "DividerNote"
+            tf = tb.text_frame
+            tf.word_wrap = True
+            r = tf.paragraphs[0].add_run()
+            r.text = note
+            r.font.size = Pt(18)
+            r.font.color.rgb = RGBColor.from_string("939396")
+            set_ea_font(r, EA_FONT)
         remove_empty_placeholders(s)
         set_notes(s, narration)
         return {"count": 1, "split": 0, "charts": 0}

@@ -12,6 +12,9 @@ Claude Code 的標準跑法（一次一章，不要一次全塞進 context）：
     …模型讀題、產 JSON、寫入 work/03_digest/ch01.json…
     python scripts/03_digest.py --validate ch01 # 驗證，FAIL 就重寫
     python scripts/03_digest.py --next          # 換 ch02
+
+舊版 digest 缺「章名／原書用語／故事」四個欄位時，--next 會自動改印補充提示詞
+（prompts/digest_supplement.md），只補那四個欄位、其餘不動；也可以 --supplement chNN 指定。
 """
 from __future__ import annotations
 
@@ -23,10 +26,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
     DIGEST, PROMPTS, chapter_files, check_keys, die, ensure_dirs, fail, info,
-    nonempty_str, ok, parse_chapter_file, read_json, step, visual_len, warn,
+    nonempty_str, norm_title, official_chapter_names, ok, parse_chapter_file, read_json,
+    step, strip_chapter_number, visual_len, warn,
 )
 
 PROMPT_FILE = PROMPTS / "digest.md"
+SUPPLEMENT_FILE = PROMPTS / "digest_supplement.md"
+
+# 「章名／原書用語／故事」這一版新增的欄位；舊 digest 缺它們時走補充提示詞
+NEW_FIELDS = ("chapter_title_en", "chapter_title_zh", "key_terms", "stories")
 
 # 品質底線用的敷衍句黑名單（規劃書 §5）
 LAZY_EVIDENCE = ["書中提到", "書中指出", "作者提到", "文中提及", "如前所述", "詳見書中"]
@@ -41,6 +49,8 @@ def main() -> int:
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--next", action="store_true", help="印出下一個未完成章節的提示詞")
     g.add_argument("--prompt", metavar="CH_ID", help="印出指定章節的提示詞，如 ch03")
+    g.add_argument("--supplement", metavar="CH_ID",
+                   help="印出指定章節的補充提示詞（只補章名／原書用語／故事四個欄位）")
     g.add_argument("--validate", metavar="CH_ID", help="驗證指定章節，all = 全部")
     g.add_argument("--status", action="store_true", help="顯示各章進度")
     ap.add_argument("--max-chars", type=int, default=60000,
@@ -58,6 +68,8 @@ def main() -> int:
         return emit_next(chs, args.max_chars)
     if args.prompt:
         return emit_prompt(chs, args.prompt, args.max_chars)
+    if args.supplement:
+        return emit_prompt(chs, args.supplement, args.max_chars, mode="supplement")
     if args.validate:
         return run_validate(args.validate, chs)
     return 0
@@ -66,6 +78,15 @@ def main() -> int:
 # ==========================================================================
 def digest_path(ch_id: str) -> Path:
     return DIGEST / f"{ch_id}.json"
+
+
+def needs_supplement(dp: Path) -> bool:
+    """digest 存在但缺這一版新增的欄位。"""
+    try:
+        d = read_json(dp)
+    except Exception:  # noqa: BLE001
+        return False
+    return isinstance(d, dict) and any(k not in d for k in NEW_FIELDS)
 
 
 def find_chapter(chs: list[Path], ch_id: str) -> Path:
@@ -85,6 +106,10 @@ def show_status(chs: list[Path]) -> int:
         if not dp.exists():
             print(f"  ○ {ch_id}  未處理     {meta.get('title', p.name)[:34]}")
             todo += 1
+            continue
+        if needs_supplement(dp):
+            print(f"  ◐ {ch_id}  缺補充     {meta.get('title', '')[:30]}（章名／原書用語／故事）")
+            broken += 1
             continue
         errs = validate_digest(dp, ch_id)
         if errs:
@@ -111,22 +136,33 @@ def emit_next(chs: list[Path], max_chars: int) -> int:
         meta, _ = parse_chapter_file(p)
         ch_id = meta.get("ch_id") or p.name.split("_")[0]
         dp = digest_path(ch_id)
-        if not dp.exists() or validate_digest(dp, ch_id):
+        if not dp.exists():
+            return emit_prompt(chs, ch_id, max_chars)
+        if needs_supplement(dp):
+            return emit_prompt(chs, ch_id, max_chars, mode="supplement")
+        if validate_digest(dp, ch_id):
             return emit_prompt(chs, ch_id, max_chars)
     ok("所有章節都已完成且通過驗證。下一步：python scripts/04_research.py --next")
     return 0
 
 
-def emit_prompt(chs: list[Path], ch_id: str, max_chars: int) -> int:
+def emit_prompt(chs: list[Path], ch_id: str, max_chars: int, mode: str = "full") -> int:
     path = find_chapter(chs, ch_id)
     meta, body = parse_chapter_file(path)
     ch_id = meta.get("ch_id", ch_id)
 
-    if not PROMPT_FILE.exists():
-        die(f"找不到提示詞：{PROMPT_FILE}")
-    tpl = PROMPT_FILE.read_text(encoding="utf-8")
+    tpl_file = SUPPLEMENT_FILE if mode == "supplement" else PROMPT_FILE
+    if not tpl_file.exists():
+        die(f"找不到提示詞：{tpl_file}")
+    tpl = tpl_file.read_text(encoding="utf-8")
     tpl = tpl.replace("{chapter_file}", str(path.relative_to(path.parent.parent.parent)))
     tpl = tpl.replace("{ch_id}", ch_id)
+    title_en = strip_chapter_number(meta.get("title", ""))
+    official = official_chapter_names().get(norm_title(title_en), "")
+    tpl = tpl.replace("{chapter_title_en}", title_en)
+    tpl = tpl.replace("{official_hint}",
+                      f"官方中譯本章名是「{official}」，照抄" if official
+                      else "還沒查到官方中譯（work/04_author.json）；自己忠實翻譯，翻不好就留空字串")
 
     truncated = False
     if len(body) > max_chars:
@@ -134,7 +170,8 @@ def emit_prompt(chs: list[Path], ch_id: str, max_chars: int) -> int:
         truncated = True
 
     print("=" * 78)
-    print(f"  Stage 3 深讀提示詞 — {ch_id}：{meta.get('title', '')}")
+    label = "補充深讀提示詞（只補章名／原書用語／故事）" if mode == "supplement" else "深讀提示詞"
+    print(f"  Stage 3 {label} — {ch_id}：{meta.get('title', '')}")
     print(f"  章節檔 {path.name} / 原書頁碼 {meta.get('pages')} / {meta.get('word_count')} 字")
     print(f"  產出目標 work/03_digest/{ch_id}.json")
     print("=" * 78)
@@ -199,7 +236,11 @@ def validate_digest(path: Path, ch_id: str) -> list[str]:
         return [f"JSON 解析失敗：{e}"]
 
     check_keys(d, ["ch_id", "title", "one_line", "thesis", "key_points", "quotes",
-                   "data_points", "counterpoint", "open_questions"], ch_id, errors)
+                   "data_points", "counterpoint", "open_questions",
+                   "chapter_title_en", "chapter_title_zh", "key_terms", "stories"], ch_id, errors)
+    if any(k not in d for k in NEW_FIELDS):
+        errors.append("缺「章名／原書用語／故事」欄位：python scripts/03_digest.py --supplement "
+                      f"{ch_id} 印補充提示詞")
     if errors:
         return errors
 
@@ -249,6 +290,48 @@ def validate_digest(path: Path, ch_id: str) -> list[str]:
             errors.append(f"{w}.book_evidence 是空話（「{ev[:20]}」），要有人名／年份／數字／案例")
         if ev and not _has_specific(ev):
             errors.append(f"{w}.book_evidence 沒有任何具體物（人名／公司／年份／數字／案例名）")
+
+    # --- 章名 ---
+    nonempty_str(d, "chapter_title_en", ch_id, errors)
+    if not isinstance(d.get("chapter_title_zh"), str):
+        errors.append("chapter_title_zh 必須是字串（沒有好翻譯就給空字串）")
+    elif d["chapter_title_zh"].strip() and visual_len(d["chapter_title_zh"]) > 20:
+        errors.append(f"chapter_title_zh 超過 20 字（{visual_len(d['chapter_title_zh']):.0f}）")
+
+    # --- key_terms 底線 7：作者的用語 ---
+    kts = d.get("key_terms")
+    if not isinstance(kts, list) or not (5 <= len(kts) <= 10):
+        errors.append(f"key_terms 需 5–10 個（目前 {len(kts) if isinstance(kts, list) else '非陣列'}）")
+    for i, kt in enumerate(kts if isinstance(kts, list) else []):
+        w = f"{ch_id}.key_terms[{i}]"
+        check_keys(kt, ["en", "zh", "page_ref"], w, errors)
+        if not isinstance(kt, dict):
+            continue
+        nonempty_str(kt, "en", w, errors)
+        nonempty_str(kt, "page_ref", w, errors)
+        if not isinstance(kt.get("zh"), str):
+            errors.append(f"{w}.zh 必須是字串（翻不好就給空字串）")
+        elif kt["zh"].strip() and visual_len(kt["zh"]) > 16:
+            errors.append(f"{w}.zh 超過 16 字，投影片放不下")
+        if visual_len(kt.get("note") or "") > 24:
+            errors.append(f"{w}.note 超過 20 字")
+
+    # --- stories 底線 8：有人物、時間、轉折 ---
+    sts = d.get("stories")
+    if not isinstance(sts, list) or not (1 <= len(sts) <= 3):
+        errors.append(f"stories 需 1–3 則（目前 {len(sts) if isinstance(sts, list) else '非陣列'}）")
+    for i, st in enumerate(sts if isinstance(sts, list) else []):
+        w = f"{ch_id}.stories[{i}]"
+        check_keys(st, ["who", "when", "what", "turn", "so_what", "page_ref"], w, errors)
+        if not isinstance(st, dict):
+            continue
+        for k in ("who", "when", "what", "turn", "so_what", "page_ref"):
+            nonempty_str(st, k, w, errors)
+        for k, cap in (("what", 80), ("turn", 40), ("so_what", 40)):
+            if visual_len(st.get(k) or "") > cap:
+                errors.append(f"{w}.{k} 超過 {cap} 字（{visual_len(st.get(k) or ''):.0f}）")
+        if st.get("what") and not _has_specific(st["what"]):
+            errors.append(f"{w}.what 沒有具體細節（人名／年份／數字／地名），故事要有畫面")
 
     # --- quotes ---
     qs = d.get("quotes") or []

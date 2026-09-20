@@ -7,6 +7,8 @@
     python scripts/04_research.py --next           # 印出下一章的研究提示詞（含 digest）
     …模型用 WebSearch 查證，寫入 work/04_evidence/chNN.json…
     python scripts/04_research.py --validate ch01  # 驗證 schema 與硬性規則
+    python scripts/04_research.py --author         # 全書一次：作者解析 + 中譯本章名的提示詞
+    python scripts/04_research.py --validate-author
     python scripts/08_qa.py --check-sources        # 全章跑完後做 URL 全檢
 
 硬性規則（規劃書 §6）：每一筆都必須有 source_url，查不到就不要寫，
@@ -23,12 +25,14 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    DIGEST, EVIDENCE, PROJECT_FILE, PROMPTS, chapter_files, check_keys, die,
+    AUTHOR_JSON, DIGEST, EVIDENCE, PROJECT_FILE, PROMPTS, chapter_files, check_keys, die,
     ensure_dirs, fail, format_timecode, info, load_project, nonempty_str, ok,
-    parse_chapter_file, parse_timecode, read_json, step, visual_len, warn,
+    parse_chapter_file, parse_timecode, read_json, step, strip_chapter_number, visual_len,
+    warn,
 )
 
 PROMPT_FILE = PROMPTS / "research.md"
+AUTHOR_PROMPT = PROMPTS / "author.md"
 
 VALID_STATUS = {"confirmed", "outdated", "contested"}
 VALID_CHART = {"bar", "line", "stacked"}
@@ -50,6 +54,9 @@ def main() -> int:
                    help="列出所有章節找到的影片建議，讓使用者挑")
     g.add_argument("--accept-video", metavar="CH_ID:N",
                    help="把某章的第 N 支影片加進 config/project.yaml 的 videos[]，如 ch03:0")
+    g.add_argument("--author", action="store_true",
+                   help="印出作者解析（含中譯本章名）的提示詞，全書只跑一次")
+    g.add_argument("--validate-author", action="store_true", help="驗證 work/04_author.json")
     args = ap.parse_args()
 
     ensure_dirs()
@@ -57,6 +64,10 @@ def main() -> int:
     if not ids:
         die("work/02_chapters/ 是空的，請先跑 02_split_chapters.py")
 
+    if args.author:
+        return emit_author_prompt(ids)
+    if args.validate_author:
+        return run_validate_author()
     if args.status:
         return show_status(ids)
     if args.videos:
@@ -114,6 +125,12 @@ def show_status(ids: list[str]) -> int:
          + (f"，{broken} 章不合格" if broken else "")
          + (f"，{todo} 章未處理" if todo else "")
          + (f"，{missing_digest} 章缺 digest" if missing_digest else ""))
+    if AUTHOR_JSON.exists():
+        a_errs = validate_author(AUTHOR_JSON)
+        print(("  ✗ 作者解析  %d 項不合格" % len(a_errs)) if a_errs else
+              "  ● 作者解析  已完成（work/04_author.json）")
+    else:
+        print("  ○ 作者解析  未做：python scripts/04_research.py --author")
     if missing_digest:
         info("先補 Stage 3：python scripts/03_digest.py --next")
     elif todo or broken:
@@ -205,6 +222,145 @@ def run_validate(target: str, ids: list[str]) -> int:
     info("下一步：python scripts/08_qa.py --check-sources（做一次 URL HTTP 全檢）")
     return 0
 
+
+
+# ==========================================================================
+# 作者解析（含中譯本章名）：全書一次
+# ==========================================================================
+def emit_author_prompt(ids: list[str]) -> int:
+    if not AUTHOR_PROMPT.exists():
+        die(f"找不到提示詞：{AUTHOR_PROMPT}")
+    cfg = load_project()
+    book = cfg.get("book") or {}
+    rows = []
+    for p in chapter_files():
+        meta, _ = parse_chapter_file(p)
+        rows.append(f"- {meta.get('ch_id')}  {strip_chapter_number(meta.get('title', ''))}")
+    tpl = (AUTHOR_PROMPT.read_text(encoding="utf-8")
+           .replace("{book_title_en}", book.get("title_en", ""))
+           .replace("{book_title_zh}", book.get("title_zh", ""))
+           .replace("{author}", book.get("author", ""))
+           .replace("{chapter_list}", "\n".join(rows)))
+    print("=" * 78)
+    print("  Stage 4 作者解析提示詞（讀完寫 work/04_author.json）")
+    print("=" * 78)
+    print(tpl)
+    return 0
+
+
+def run_validate_author() -> int:
+    step("驗證 work/04_author.json")
+    if not AUTHOR_JSON.exists():
+        die(f"找不到 {AUTHOR_JSON}，先跑 --author")
+    errs = validate_author(AUTHOR_JSON)
+    if errs:
+        for e in errs:
+            fail(e)
+        print()
+        info(f"{len(errs)} 項不合格，依 prompts/author.md 修正後重驗")
+        return 1
+    d = read_json(AUTHOR_JSON)
+    a, b = d.get("author") or {}, d.get("book") or {}
+    ez = b.get("edition_zh") or {}
+    n_zh = sum(1 for c in (b.get("chapters") or []) if (c.get("title_zh") or "").strip())
+    ok(f"通過：{a.get('name')}｜背景 {len(a.get('background') or [])}、生涯 {len(a.get('career') or [])}、"
+       f"著作 {len(a.get('works') or [])}、評價 {len(a.get('reception') or [])}、批評 {len(a.get('critics') or [])}")
+    if ez:
+        info(f"中譯本：《{ez.get('title_zh', '')}》{ez.get('publisher', '')} {ez.get('year', '')}，"
+             f"{ez.get('translator', '')} 譯；官方章名 {n_zh}/{len(b.get('chapters') or [])} 章")
+    else:
+        info("沒有中譯本：簡報章名用原文")
+    return 0
+
+
+def _url_real(url: str) -> bool:
+    """看起來是真的網址：http(s)、有網域、路徑不只一個斜線、沒有佔位符。"""
+    if not isinstance(url, str) or not url.strip():
+        return False
+    u = urlparse(url.strip())
+    if u.scheme not in ("http", "https") or not u.netloc:
+        return False
+    if PLACEHOLDER_RE.search(url):
+        return False
+    return len(u.path.strip("/")) > 0 or bool(u.query)
+
+
+def _sourced_list(items, key: str, lo: int, hi: int, text_key: str, cap: int,
+                  errs: list[str], required: tuple[str, ...] = ()) -> None:
+    if not isinstance(items, list) or not (lo <= len(items) <= hi):
+        errs.append(f"author.{key} 需 {lo}–{hi} 筆（目前 {len(items) if isinstance(items, list) else '非陣列'}）")
+        return
+    for i, it in enumerate(items):
+        w = f"author.{key}[{i}]"
+        if not isinstance(it, dict):
+            errs.append(f"{w} 必須是物件")
+            continue
+        for k in (text_key,) + required:
+            nonempty_str(it, k, w, errs)
+        if visual_len(it.get(text_key) or "") > cap:
+            errs.append(f"{w}.{text_key} 超過 {cap} 字")
+        if not _url_real(it.get("source_url")):
+            errs.append(f"{w}.source_url 不是真實網址：{it.get('source_url')!r}（查不到就少寫一筆）")
+
+
+def validate_author(path: Path) -> list[str]:
+    errs: list[str] = []
+    try:
+        d = read_json(path)
+    except Exception as e:  # noqa: BLE001
+        return [f"JSON 解析失敗：{e}"]
+    check_keys(d, ["author", "book"], "04_author", errs)
+    if errs:
+        return errs
+    a, b = d.get("author"), d.get("book")
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return ["author 與 book 都必須是物件"]
+
+    nonempty_str(a, "name", "author", errs)
+    _sourced_list(a.get("background"), "background", 3, 6, "text", 60, errs)
+    _sourced_list(a.get("career"), "career", 3, 8, "what", 40, errs, required=("when",))
+    _sourced_list(a.get("works"), "works", 1, 12, "title_en", 60, errs)
+    _sourced_list(a.get("stance"), "stance", 1, 3, "text", 60, errs)
+    _sourced_list(a.get("reception"), "reception", 1, 4, "text", 60, errs)
+    _sourced_list(a.get("critics") if a.get("critics") is not None else [], "critics", 0, 3, "text", 60, errs)
+    why = a.get("why_this_book")
+    if not isinstance(why, dict) or not (why.get("text") or "").strip():
+        errs.append("author.why_this_book.text 必填：作者為什麼寫這本書")
+    else:
+        if visual_len(why["text"]) > 120:
+            errs.append("author.why_this_book.text 超過 120 字")
+        if not _url_real(why.get("source_url")):
+            errs.append("author.why_this_book.source_url 不是真實網址")
+    if not (a.get("reception") and (a.get("critics") or [])):
+        errs.append("評價與批評要成對：reception 與 critics 至少各 1 筆（只有掌聲的作者頁不可信）")
+
+    nonempty_str(b, "title_en", "book", errs)
+    ez = b.get("edition_zh")
+    chapters = b.get("chapters")
+    if ez is not None:
+        if not isinstance(ez, dict):
+            errs.append("book.edition_zh 必須是物件或 null")
+        else:
+            for k in ("title_zh", "publisher", "translator"):
+                nonempty_str(ez, k, "book.edition_zh", errs)
+            if not _url_real(ez.get("source_url")):
+                errs.append("book.edition_zh.source_url 不是真實網址")
+            n_zh = sum(1 for c in (chapters or []) if isinstance(c, dict) and (c.get("title_zh") or "").strip())
+            if not n_zh:
+                errs.append("有中譯本就要把目錄抄進 book.chapters（title_zh 逐字照抄），一章都沒抄到不准說有中譯本")
+    if chapters is not None:
+        if not isinstance(chapters, list):
+            errs.append("book.chapters 必須是陣列")
+        else:
+            for i, c in enumerate(chapters):
+                w = f"book.chapters[{i}]"
+                if not isinstance(c, dict):
+                    errs.append(f"{w} 必須是物件")
+                    continue
+                nonempty_str(c, "title_en", w, errs)
+                if not isinstance(c.get("title_zh", ""), str):
+                    errs.append(f"{w}.title_zh 必須是字串（抄不到給空字串）")
+    return errs
 
 
 # ==========================================================================

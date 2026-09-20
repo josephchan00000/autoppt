@@ -4,7 +4,7 @@
 
     python tools/make_fixtures.py --chapters 8
 
-會寫入 work/02_chapters/、work/03_digest/、work/04_evidence/、work/05a_thesis.json。
+會寫入 work/02_chapters/、work/03_digest/、work/04_evidence/、work/04_author.json、work/05a_guide.json。
 所有數值都是**假的**，source_title 都標了「測試資料」，不要拿去用。
 真書上線前記得 make clean-work。
 
@@ -18,7 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from _common import (  # noqa: E402
-    CHAPTERS, DIGEST, EVIDENCE, THESIS_JSON, ensure_dirs, is_appendix, ok, step, write_json,
+    AUTHOR_JSON, CHAPTERS, DIGEST, EVIDENCE, GUIDE_JSON, ensure_dirs, is_appendix, ok, step,
+    write_json,
 )
 
 TOPICS = [
@@ -34,7 +35,7 @@ TOPICS = [
     ("行為缺口吃掉三分之一的報酬", "行為缺口"),
 ]
 
-# 主張句（≤14 字、不是主題名）：合成 thesis.json 的幕與短主張用
+# 結論句（≤14 字、不是主題名）：合成 guide.json 各章 headline 用
 SHORT_CLAIMS = [
     "配置決定九成績效", "波動不是風險，虧損才是", "分散要跨因子不跨檔數", "成本是唯一確定的變數",
     "再平衡賣的是情緒", "擇時的勝率門檻太高", "流動性只在不缺錢時存在", "報酬順序決定退休成敗",
@@ -82,6 +83,19 @@ def main() -> int:
         write_json(DIGEST / f"{ch_id}.json", {
             "ch_id": ch_id,
             "title": f"第{i}章 {topic}",
+            "chapter_title_en": f"Chapter {i} {topic}",
+            "chapter_title_zh": "",
+            "key_terms": [{"en": f"the {topic} principle", "zh": topic, "page_ref": f"p.{p0 + 1}",
+                           "note": "章名裡的關鍵詞（測試）"}] + [
+                {"en": f"term {k} of {topic}", "zh": f"{topic}用語{k}", "page_ref": f"p.{p0 + k}",
+                 "note": "作者的用語（測試）"} for k in range(2, 6)
+            ],
+            "stories": [
+                {"who": f"測試人物{i}", "when": f"19{60 + i}", "where": "倫敦",
+                 "what": f"19{60 + i} 年他用 {3 + i} 倍槓桿買進，三個月後市場跌 {20 + i}%（測試資料）",
+                 "turn": "追繳保證金那天才知道流動性不存在（測試）",
+                 "so_what": f"作者用它證明{topic}不是技術問題（測試）", "page_ref": f"p.{p0 + 2}"}
+            ],
             "one_line": f"這章用實證資料說明{topic}為什麼被普遍誤解",
             "thesis": thesis + "，作者用三十年的跨市場資料支持這個主張，但取樣期間全落在利率長期下行的環境。",
             "key_points": [
@@ -151,83 +165,93 @@ def main() -> int:
             }] if i % 2 == 1 else []),
         })
 
-    write_thesis(n)
-    ok(f"{n} 章 → work/02_chapters/, work/03_digest/, work/04_evidence/, work/05a_thesis.json")
+    write_author()
+    write_guide(n)
+    ok(f"{n} 章 → work/02_chapters/, work/03_digest/, work/04_evidence/, work/04_author.json, work/05a_guide.json")
     print()
     print("  下一步：python scripts/05_outline.py --force")
     print("  用完清乾淨：make clean-work")
     return 0
 
 
-def write_thesis(n: int) -> None:
-    """合成的論證設計：把章節分成 3–4 幕，最後一章進附錄，證據引用只指向真的存在的編號。"""
-    ids = [f"ch{i:02d}" for i in range(1, n + 1)]
-    main_ids = ids[:-1] if n >= 4 else ids
-    appendix = ids[len(main_ids):]
-    k = 4 if len(main_ids) >= 8 else 3
-    size = -(-len(main_ids) // k)
-    groups = [main_ids[i:i + size] for i in range(0, len(main_ids), size)]
-    while len(groups) < 3:                     # 章數太少時拆到 3 幕
-        big = max(groups, key=len)
-        if len(big) < 2:
-            break
-        groups.remove(big)
-        groups += [big[:len(big) // 2], big[len(big) // 2:]]
+def write_author() -> None:
+    """合成的作者解析：來源用真實網址（只是內容是假的），validator 才過得了。"""
+    st, url = REAL_URLS[0]
+    st2, url2 = REAL_URLS[1]
+    write_json(AUTHOR_JSON, {
+        "author": {
+            "name": "測試作者 Test Author", "name_zh": "測試作者", "born": "1962-12",
+            "background": [
+                {"text": "劍橋大學歷史系（測試資料）", "source_title": st, "source_url": url, "as_of": "2024-01"},
+                {"text": "曾任投資銀行策略師（測試資料）", "source_title": st, "source_url": url, "as_of": "2024-01"},
+                {"text": "現為財經專欄作家（測試資料）", "source_title": st2, "source_url": url2, "as_of": "2024-01"},
+            ],
+            "career": [
+                {"when": "1990s", "what": "投資銀行分析師（測試）", "source_url": url},
+                {"when": "2008–2014", "what": "資產配置團隊（測試）", "source_url": url},
+                {"when": "2015–", "what": "專欄作家（測試）", "source_url": url2},
+            ],
+            "works": [{"year": 1999, "title_en": "Test Book One", "title_zh": "", "note": "年度好書（測試）", "source_url": url}],
+            "stance": [{"text": "傾向市場決定利率的學派（測試資料）", "source_title": st, "source_url": url}],
+            "why_this_book": {"text": "想回答資本主義能不能在沒有市場利率下運作（測試資料）", "source_title": st, "source_url": url},
+            "reception": [{"text": "獲年度圖書獎（測試資料）", "source_title": st2, "source_url": url2, "as_of": "2023-06"}],
+            "critics": [{"text": "被批評挑選有利的歷史案例（測試資料）", "source_title": st2, "source_url": url2}],
+        },
+        "book": {"title_en": "Test Book", "year_en": 2022, "publisher_en": "", "edition_zh": None, "chapters": []},
+    })
 
-    acts = []
-    for gi, chunk in enumerate(groups):
-        first = chunk[0]
-        i0 = int(first[2:])
-        ev = [
-            {"ch_id": first, "kp": 0, "use": "撐住第一步：這是常見誤解", "visual": "labeled"},
-            {"ch_id": first, "data": 0, "use": "書中的數字", "visual": "stat"},
-            {"ch_id": first, "taiwan": 0, "use": "台灣的對照數字", "visual": "split"},
-            {"ch_id": first, "verified": 0, "use": "書中數字已過期，帶最新值", "visual": "table"},
-        ]
-        second = chunk[1] if len(chunk) > 1 else first
-        if int(second[2:]) % 2 == 1:
-            ev.append({"ch_id": second, "chart": 0, "use": "五年走勢要看形狀", "visual": "chart"})
-        else:
-            ev.append({"ch_id": second, "kp": 1, "use": "制度面的放大機制", "visual": "flow"})
-        acts.append({
-            "id": f"act{gi + 1}",
-            "claim": SHORT_CLAIMS[(i0 - 1) % len(SHORT_CLAIMS)],
-            "question": f"第 {gi + 1} 幕要回答的問題（測試）",
-            "support": ["因為多數人把它當技術問題（測試）", "所以換工具不會改變結果（測試）",
+
+def write_guide(n: int) -> None:
+    """合成的導讀設計：最後一章進附錄，其餘照章序進主線，引用只指向真的存在的編號。"""
+    ids = [f"ch{i:02d}" for i in range(1, n + 1)]
+    main_ids = ids[:-1] if n >= 5 else ids
+    chapters = {}
+    for cid in main_ids:
+        i = int(cid[2:])
+        chapters[cid] = {
+            "headline": SHORT_CLAIMS[(i - 1) % len(SHORT_CLAIMS)],
+            "outline": ["因為多數人把它當技術問題（測試）", "所以換工具不會改變結果（測試）",
                         "因此要改的是決策架構（測試）"],
-            "evidence": ev,
-            "implication": "把成本與持有期間寫回配置假設，再談選股（測試資料）",
-            "ch_ids": chunk,
-        })
-    write_json(THESIS_JSON, {
+            "points": [{"kp": 1}, {"kp": 2}],
+            "visuals": ([{"kp": 0, "visual": "flow", "use": "機制的傳導順序（測試）"},
+                         {"data": 0, "visual": "stat", "use": "書中的數字（測試）"}]
+                        + ([{"chart": 0, "visual": "chart", "use": "五年走勢（測試）"}] if i % 2 == 1 else [])),
+            "today": {"verified": 0, "visual": "table", "use": "書中數字已過期，帶最新值（測試）"},
+            "story": 0,
+        }
+    write_json(GUIDE_JSON, {
         "book_claim": "長期報酬由配置與成本決定，選股與擇時扣除成本後貢獻歸零（測試）",
         "book_claim_short": "配置與成本決定長期報酬",
         "why_now": "升息之後每個假設都要重算",
-        "implication": "把折現率、成本與持有期間寫回配置假設，再談選股",
-        "acts": acts,
+        "implication_short": "先算配置，再談選股",
+        "implications": [
+            {"label": "配置", "text": "把折現率與成本寫回配置假設（測試）"},
+            {"label": "持有期", "text": "持有期間要配合流動性，不配合報酬（測試）"},
+        ],
+        "main_ch_ids": main_ids,
+        "chapters": chapters,
         "counter": {
             "claim": "資料全落在降息四十年",
             "points": [
-                {"label": "取樣", "ch_id": ids[0],
-                 "text": "1990–2020 全在利率下行段，升息環境未驗證（測試）"},
-                {"label": "因果", "ch_id": ids[min(1, n - 1)],
-                 "text": "買回增加與投資下滑同時發生，未排除共同原因（測試）"},
+                {"label": "取樣", "ch_id": ids[0], "text": "1990–2020 全在利率下行段，升息環境未驗證（測試）"},
+                {"label": "因果", "ch_id": ids[min(1, n - 1)], "text": "買回增加與投資下滑同時發生，未排除共同原因（測試）"},
             ],
         },
         "closing": "先算配置，再談選股",
-        "appendix_ch_ids": appendix,
     })
 
 
 # ---------------------------------------------------------------------------
-def _fill_todo(obj):
-    """把藍圖裡的【待填】換成假文案（帶數字，過得了具體性檢查）。"""
+def _fill_todo(obj, key: str | None = None):
+    """把藍圖裡的【待填】換成假文案（帶數字，過得了具體性檢查；標籤要短）。"""
     if isinstance(obj, str):
-        return "測試文案 3.1%（假資料）" if "【待填" in obj else obj
+        if "【待填" not in obj:
+            return obj
+        return "測試" if key == "label" else "測試文案 3.1%（假資料）"
     if isinstance(obj, list):
-        return [_fill_todo(x) for x in obj]
+        return [_fill_todo(x, key) for x in obj]
     if isinstance(obj, dict):
-        return {k: _fill_todo(v) for k, v in obj.items()}
+        return {k: _fill_todo(v, k) for k, v in obj.items()}
     return obj
 
 
@@ -266,6 +290,11 @@ def fill_narration() -> int:
         dur = int(s.get("duration_sec", 60))
         target = dur * 220 / 60
         text, i = "", 0
+        if s.get("kind") == "divider":
+            s["narration"] = f"接下來這一章是「{s.get('title', '')}」，先講作者在這一章想回答的問題，再看數字。（測試）"
+            continue
+        if s.get("story_hint"):                       # 大綱頁：用故事開場
+            text = f"先講一個故事。{s['story_hint'].split('｜')[0]}。（測試）"
         while True:
             cand = (text + SENT[i % len(SENT)])
             from _common import narration_chars

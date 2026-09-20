@@ -1,15 +1,15 @@
 # autoppt — 復華風格「專業書分享」簡報自動化
 
-把一本書變成一場讀書分享：符合復華母片版型、**論證式結構**、每頁都有出處的 PPTX，
+把一本書變成一場讀書分享：符合復華母片版型、**照作者章序的導讀體**、每頁都有出處的 PPTX，
 外加一份 Word 逐字稿。
 
 **核心原則：內容產出與版面產出完全分離。**
 所有「想內容」的階段只輸出 JSON；所有「排版」的階段只讀 JSON、不生內容。
 任何一頁不滿意，只要改 `work/05_deck.json` 重跑 build，30 秒重出整份 PPT。
 
-**第二個原則：簡報是一個論證，不是一份讀書報告。**
-先寫一句主張，再挑撐得住它的證據；沒撐住主張的章節進附錄。品質優先於時間，
-時間在 QA 只是 WARN。
+**第二個原則：聽眾要聽到的是作者，不是我們。**
+照作者的章序走、章名用官方中譯（找不到就原文）、投影片用作者的字、故事進逐字稿、
+作者先上台。品質優先於時間，時間在 QA 只是 WARN；塞不進的章進附錄，不刪。
 
 ---
 
@@ -26,7 +26,7 @@ vi config/project.yaml     # 填書名、講者、日期、長度、語氣、色
 ```
 
 然後開 Claude，說「跑下一步」。每個階段結束它會停下來回報：
-拆章結果、前兩章的深讀品質、論證設計（主張句）、藍圖文案、最後的 QA 報告。
+拆章結果、前兩章的深讀品質、導讀設計（主線章與各章結論句）、藍圖文案、最後的 QA 報告。
 
 要交給別人：把整個資料夾打包（`git archive` 或直接 zip，`work/` `output/` `input/`
 本來就不入庫），對方放進書檔、開 Claude、說「跑下一步」。
@@ -36,34 +36,37 @@ vi config/project.yaml     # 填書名、講者、日期、長度、語氣、色
 ```bash
 make extract                                 # Stage 1  解析書檔
 make split                                   # Stage 2  拆章 → 停，人工確認章節表
-python scripts/03_digest.py --next           # Stage 3  逐章深讀（Claude 驅動）
-python scripts/04_research.py --next         # Stage 4  外部研究（Claude + WebSearch）
+python scripts/03_digest.py --next           # Stage 3  逐章深讀（Claude 驅動；含章名／作者用語／故事）
+python scripts/04_research.py --author       # Stage 4  作者解析 + 中譯本章名（全書一次，WebSearch）
+python scripts/04_research.py --next         #          逐章外部研究（Claude + WebSearch）
 make check-sources                           #          URL 全檢
 python tools/extract_book_figures.py --input input/book.pdf --out work/08_bookfigs
-make thesis                                  # Stage 5a 論證設計提示詞 → Claude 寫 work/05a_thesis.json
-python scripts/05_outline.py --validate-thesis
+make guide                                   # Stage 5a 導讀設計提示詞 → Claude 寫 work/05a_guide.json
+python scripts/05_outline.py --validate-guide
 make outline                                 # Stage 5b 藍圖 → 停，潤飾文案
 make build                                   # Stage 6+7 產 PPTX + 逐字稿
 make qa                                      # Stage 8  品管
 ```
 
 改稿迴圈：**改 `work/05_deck.json` → `make revise`**（只重跑 Stage 6–8）。
-結構要改：改 `work/05a_thesis.json` → `python scripts/05_outline.py --force` → 重新潤飾。
+結構要改：改 `work/05a_guide.json` → `python scripts/05_outline.py --force` → 重新潤飾。
 
 ---
 
-## 簡報長什麼樣：金字塔
+## 簡報長什麼樣：導讀體
 
 ```
-序幕   封面 → 執行摘要（主張／證據／意義）→ 全書地圖（N 個主張句）
-每幕   主張頁籤（主張句）→ 主張頁（論證鏈）→ 證據頁 ×2–8 → 意涵頁（對長期投資）
-反方   本書站不住的地方（取樣、因果、反例、時空）
-結語   一句收束 + Q&A
-附錄   沒進主線的章、沒用到的過期數據——不計時、不需逐字稿，被問到再翻
+序幕   封面 → 作者是誰（2–3 頁：背景／立場／為什麼寫、生涯與著作時間軸、評價與批評）
+       → 執行摘要（主張／證據／意義）→ 章序地圖（分部＋主線章的官方章名）
+每章   章名頁籤（官方中譯，否則原文；下一行「第 N 章｜英文原名」）→ 大綱頁（作者的推論 2–4 步）
+       → 示意圖／書中原圖 ×1–3 → 重點 → 今天的數字（書中值 → 最新值、台灣對照）
+收尾   全書對長期投資的意義 → 反方（取樣、因果、反例、時空）→ 結語 + Q&A
+附錄   沒進主線的章——不計時、不需逐字稿，被問到再翻
 ```
 
-- **幕的順序按論證走，不按目錄走。** 聽眾最想知道的放前面，歷史是證據不是開場。
-- **頁籤是主張句**，不是主題名。✗「資產泡沫與退休金」 ✓「泡沫是折現率歸零的算術」
+- **章序照書、章名照官方。** 60 分鐘約 8–14 章進主線，其餘進附錄。
+- **投影片上的字是作者的字**：每章至少出現一個作者用語（`key_terms`），QA 會抓；
+  故事不上投影片，進逐字稿當每一章的開場。
 - **文字頁只准三種樣式**（`style`）：`chain` 論證鏈（①因為→②所以→③因此）、
   `labeled` 標籤＋說明（機制／證據／今天）、`prose` 敘事段（有情節的案例）。
   裸條列 QA 判 FAIL，三種要混用。
@@ -95,10 +98,10 @@ make qa                                      # Stage 8  品管
 |---|---|---|---|---|
 | 1 | `01_extract.py` | `input/book.*` | `work/01_raw/pages.jsonl`, `toc.json` | 程式 |
 | 2 | `02_split_chapters.py` | pages.jsonl | `work/02_chapters/chNN_*.md` | 程式 → **停** |
-| 3 | `03_digest.py` | 章節 md | `work/03_digest/chNN.json` | **Claude** |
-| 4 | `04_research.py` | digest | `work/04_evidence/chNN.json` | **Claude + WebSearch** |
-| 5a | `05_outline.py --thesis-prompt` | 全書濃縮索引 | `work/05a_thesis.json` | **Claude** → **停** |
-| 5b | `05_outline.py` | thesis + digest + evidence | `work/05_deck.json` | 程式 → **Claude 潤飾** → **停** |
+| 3 | `03_digest.py` | 章節 md | `work/03_digest/chNN.json`（論點、作者用語、故事、章名） | **Claude** |
+| 4 | `04_research.py` | digest | `work/04_evidence/chNN.json`、`work/04_author.json`（作者解析＋中譯本章名） | **Claude + WebSearch** |
+| 5a | `05_outline.py --guide-prompt` | 全書濃縮索引 | `work/05a_guide.json` | **Claude** → **停** |
+| 5b | `05_outline.py` | guide + digest + evidence + author | `work/05_deck.json` | 程式 → **Claude 潤飾** → **停** |
 | 6 | `06_build_pptx.py` | deck.json + 母片 | `output/*.pptx` | 程式 |
 | 7 | `07_build_script.py` | deck.json | `output/*_逐字稿.docx` | 程式 |
 | 8 | `08_qa.py` | 全部 | `output/qa_report.md` | 程式 |
@@ -109,12 +112,13 @@ Stage 3 / 4 / 5a 是「發題 → 模型作答 → 收題驗證」三段式，�
 python scripts/03_digest.py --next            # 印出下一章的提示詞（含章節全文）
 #   …模型讀題、產 JSON、寫入 work/03_digest/ch01.json…
 python scripts/03_digest.py --validate ch01   # schema + 品質底線驗證，FAIL 就重寫
-python scripts/05_outline.py --thesis-prompt  # 全書只跑一次：濃縮索引 + 論證規則
-python scripts/05_outline.py --validate-thesis  # 每筆證據引用的編號都要對得上索引
+python scripts/04_research.py --author        # 全書一次：作者解析 + 中譯本章名，每筆帶來源
+python scripts/05_outline.py --guide-prompt   # 全書只跑一次：濃縮索引 + 導讀規則
+python scripts/05_outline.py --validate-guide # 每筆引用的編號都要對得上索引
 ```
 
 Stage 5a 的 validator 只接受索引裡出現的編號——這是「不編造」的第一道關卡，
-`08_qa.py --check-sources` 的 HTTP 全檢是第二道。
+`08_qa.py --check-sources` 的 HTTP 全檢是第二道。作者頁的每一句都要對到 `04_author.json` 的一筆來源。
 
 ---
 
@@ -125,7 +129,7 @@ Stage 5a 的 validator 只接受索引裡出現的編號——這是「不編造
 ├── config/
 │   ├── fh_template_spec.json    # 版面參數：不要讓 AI 重新猜，直接讀它
 │   └── project.yaml             # 書名／講者／長度／語氣／文案門檻／節奏指引／黑名單
-├── prompts/                     # digest / research / thesis / outline / visuals / narration
+├── prompts/                     # digest / digest_supplement / research / author / guide / outline / visuals / narration
 ├── scripts/                     # 8 支 stage 腳本 + _common.py
 ├── tools/
 │   ├── extract_book_figures.py  # 抽書中原圖
@@ -133,7 +137,7 @@ Stage 5a 的 validator 只接受索引裡出現的編號——這是「不編造
 │   ├── repace_deck.py           # 改完 minutes 之後重新配速，不動文案
 │   └── make_fixtures.py         # 合成測試資料，沒有真書也能驗證 pipeline
 ├── input/                       # 原始書檔（.gitignore，版權不入庫）
-├── work/                        # 中間檔；05a_thesis.json 與 05_deck.json 是兩個修改點
+├── work/                        # 中間檔；05a_guide.json 與 05_deck.json 是兩個修改點
 └── output/                      # PPTX / DOCX / qa_report.md / preview
 ```
 
@@ -151,8 +155,9 @@ Stage 5a 的 validator 只接受索引裡出現的編號——這是「不編造
    直接 `append()` 會產生不合法 XML，PowerPoint 開檔會跳「需要修復」。
 3. **研究階段編造來源** → 這是唯一會讓你在會議上出事的錯誤。
    `prompts/research.md` 的「查不到就不要寫」是硬性規則，
-   `04_research.py --validate` 擋掉空 URL 與拼湊網址，`05_outline.py --validate-thesis`
-   擋掉索引裡沒有的引用，`08_qa.py --check-sources` 做 HTTP 全檢。三道都要留著。
+   `04_research.py --validate` 與 `--validate-author` 擋掉空 URL 與拼湊網址，
+   `05_outline.py --validate-guide` 擋掉索引裡沒有的引用，`08_qa.py --check-sources`
+   做 HTTP 全檢。三道都要留著。
 
 > 雲端環境（Cowork、Claude Code on the web）的對外連線是白名單，機構網站幾乎全被擋。
 > 這不是 bug 也不能繞。所以抓機構原圖與 URL 全檢兩件事拆成「雲端記網址、本機批次跑」。
@@ -165,7 +170,9 @@ FAIL 擋交付；WARN 不擋但要看過。
 
 | 檢查 | 判準 | 不過時 |
 |---|---|---|
-| 敘事結構 | 執行摘要在前 3 頁；每幕有頁籤（主張句）／主張頁／證據頁；有反方頁；結語收尾；無殘留【待填】 | FAIL |
+| 敘事結構 | 作者頁與執行摘要在序幕；每一主線章有章名頁籤（官方章名或原文）／大綱頁／示意圖或今天的數字；全書意涵、反方、結語；無殘留【待填】 | FAIL |
+| 原書用字 | 每一主線章的投影片至少出現該章一個作者用語（`key_terms`） | WARN |
+| 故事 | 每一主線章的逐字稿講到該章選的故事 | WARN |
 | 條列樣式 | 文字頁必為 chain / labeled / prose；標籤 ≤5 字；鏈 2–4 步；敘事 ≤2 段 | FAIL |
 | 溢排 | 內文估算 ≤8 行；主標 ≤14 字（空白內頁視覺頁 ≤20）；副標 ≤21；總字數 ≤160 | FAIL |
 | 資料來源 | 每頁（封面／頁籤／結尾除外）都有非空 sources | FAIL |
@@ -202,7 +209,7 @@ FAIL 擋交付；WARN 不擋但要看過。
 ## 沒有書也能驗證 pipeline
 
 ```bash
-python tools/make_fixtures.py --chapters 8      # 產 8 章合成 digest + evidence + thesis.json
+python tools/make_fixtures.py --chapters 8      # 產 8 章合成 digest + evidence + author + guide.json
 python scripts/05_outline.py --force
 python tools/make_fixtures.py --fill-narration  # 把【待填】與逐字稿填成假文案
 python scripts/06_build_pptx.py && python scripts/07_build_script.py
@@ -221,7 +228,8 @@ make clean-work                                  # 用完清乾淨
 | 內容空泛、抓不到書的重點 | 一次丟整本書，模型只能做淺層摘要 | 章節拆檔 + 每章獨立深讀，一次只處理一章，輸出結構化 JSON |
 | 版型跑掉、不像復華的東西 | 每次重新生成樣式，靠模型記憶 | 版型參數固定成 spec 檔，程式只填 placeholder，不自創樣式 |
 | 內容深度不夠、沒有出處 | 只有書內資訊，沒有外部佐證 | 每章強制產生研究問題 → 網路查證 → evidence.json（含 URL 與檢索日期），沒有來源的論點不准上投影片 |
-| 看不懂架構、像讀書報告 | 簡報照章節順序排，主張在最後一頁 | Stage 5a 論證設計層：先寫主張、再挑證據，幕的順序按論證走；沒撐住主張的章進附錄 |
+| 看不懂架構、像讀書報告 | 章節被合併成自創的群組名，主張在最後一頁 | Stage 5a 導讀設計：作者先上台、執行摘要先講結論，再照作者章序走，章名用官方譯名；塞不進的章進附錄 |
+| 不像這本書、聽不出作者 | 標題與內文是我們的濃縮，作者的用語與故事都被壓掉 | 深讀抓 `key_terms` 與 `stories`；投影片用作者的字（QA「原書用字」），故事進逐字稿（QA「故事」）；作者解析頁每句有來源 |
 | 一頁接一頁的條列 | 條列是最省力的寫法 | 文字頁三選一（論證鏈／標籤＋說明／敘事段），裸條列 FAIL；視覺頁 ≥40% |
 | 為了塞進時間刪掉好內容 | 頁數是硬門檻 | 頁數與時間只 WARN；多的移到附錄備用頁，不刪 |
 

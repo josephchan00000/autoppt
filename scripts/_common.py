@@ -26,7 +26,8 @@ RAW = WORK / "01_raw"
 CHAPTERS = WORK / "02_chapters"
 DIGEST = WORK / "03_digest"
 EVIDENCE = WORK / "04_evidence"
-THESIS_JSON = WORK / "05a_thesis.json"   # Stage 5a 論證設計（金字塔）
+AUTHOR_JSON = WORK / "04_author.json"    # Stage 4 作者解析（含中譯本章名）
+GUIDE_JSON = WORK / "05a_guide.json"     # Stage 5a 導讀設計（作者章序）
 DECK_JSON = WORK / "05_deck.json"
 SCRIPT_JSON = WORK / "06_script.json"
 
@@ -274,6 +275,60 @@ def chapter_files() -> list[Path]:
     return sorted(CHAPTERS.glob("ch*.md"))
 
 
+_SECTION_PREFIX_RE = re.compile(
+    r"^\s*(第\s*[0-9一二三四五六七八九十百]+\s*[章節]|[0-9]+|Chapter\s+[0-9]+"
+    r"|Introduction|Prologue|Preface|Conclusion|Postscript|Epilogue|引言|序章|前言|結語|後記|尾聲)"
+    r"\s*[:：.．\-—]?\s*", re.I)
+
+
+def strip_chapter_number(title: str) -> str:
+    """拆章標題「5: John Bull …」「Introduction: The Anarchist…」「第15章：焦慮的代價（The Price of Anxiety）」
+    → 章名本身（中文＋括號英文時取括號裡的英文，那才是作者的原章名）。"""
+    t = _SECTION_PREFIX_RE.sub("", (title or "").strip(), count=1).strip()
+    m = re.search(r"[（(]([^（）()]*[A-Za-z][^（）()]*)[）)]", t)
+    if m and re.search(r"[\u4e00-\u9fff]", t[:m.start()]):
+        t = m.group(1).strip()
+    return t
+
+
+def norm_title(title: str) -> str:
+    """章名比對用：小寫、去標點與章號、統一撇號。"""
+    t = strip_chapter_number(title).lower().replace("’", "'")
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", t).strip()
+
+
+def load_author() -> dict:
+    """work/04_author.json（作者解析 + 中譯本資訊）；沒有就回空 dict。"""
+    if not AUTHOR_JSON.exists():
+        return {}
+    try:
+        return read_json(AUTHOR_JSON) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def official_chapter_names() -> dict[str, str]:
+    """官方中譯章名：{norm(英文章名): 中譯章名}，來自 04_author.json 的 book.chapters。"""
+    out: dict[str, str] = {}
+    for c in ((load_author().get("book") or {}).get("chapters") or []):
+        if isinstance(c, dict) and (c.get("title_en") or "").strip() and (c.get("title_zh") or "").strip():
+            out[norm_title(c["title_en"])] = c["title_zh"].strip()
+    return out
+
+
+def chapter_display_name(title: str, digest: dict | None = None) -> tuple[str, str]:
+    """投影片上的章名：(顯示名, 英文原名)。
+
+    優先序：官方中譯（04_author.json）> digest.chapter_title_zh（忠實翻譯）> 英文原名。
+    翻不好的中文寧可不要——規則是「找不到官方譯名就用原文」。
+    """
+    en = strip_chapter_number((digest or {}).get("chapter_title_en") or title)
+    zh = official_chapter_names().get(norm_title(en), "")
+    if not zh and digest:
+        zh = (digest.get("chapter_title_zh") or "").strip()
+    return (zh or en), en
+
+
 def safe_filename(name: str, maxlen: int = 40) -> str:
     """章節標題轉成可用檔名（保留中文，去掉路徑危險字元）。"""
     name = re.sub(r"[\\/:*?\"<>|\r\n\t]", "", name or "").strip()
@@ -352,9 +407,10 @@ def tone_directive(kind: str = "slide") -> str:
 # 頁面角色（金字塔結構）：08_qa 的「敘事結構」檢查與 07 的分節都靠 role
 # --------------------------------------------------------------------------
 ROLE_LABELS = {
-    "cover": "封面", "summary": "執行摘要", "map": "全書地圖", "divider": "主張頁籤",
-    "claim": "主張頁", "evidence": "證據頁", "implication": "意涵頁",
-    "counter": "反方頁", "closing": "結語", "appendix": "附錄", "video": "影片頁",
+    "cover": "封面", "author": "作者頁", "summary": "執行摘要", "map": "章序地圖",
+    "part": "分部頁籤", "divider": "章名頁籤", "outline": "大綱頁", "evidence": "示意圖／重點頁",
+    "today": "今天的數字", "implication": "全書意涵", "counter": "反方頁", "closing": "結語",
+    "appendix": "附錄", "video": "影片頁",
 }
 
 

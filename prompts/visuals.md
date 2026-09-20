@@ -7,6 +7,12 @@
 
 ---
 
+## 零之前：每一章至少一張示意圖
+
+導讀體的每一章是「大綱頁 → 示意圖 → 重點 → 今天的數字」。示意圖是骨架：
+書中原圖最好，沒有就把作者講的機制畫成 `flow`、把故事畫成 `timeline`、把對照畫成
+`split` 或 `table`。投影片上是骨架，細節在逐字稿。`08_qa.py` 對沒有示意圖的章 WARN。
+
 ## 零、每一頁都要先問：這頁非得條列不可嗎？
 
 實跑一本 21 章的書，產出 84 頁裡有 45 頁（54%）是條列頁，每頁 4–5 條。
@@ -40,7 +46,7 @@
 - 不可能畫錯，因為那就是作者的論據本身
 - 出處只要寫「《書名》書中圖表，p.XX」
 
-抽圖的方式（**在 Stage 5a 之前做**，thesis.json 才能用 `figure` 路徑引用）：
+抽圖的方式（**在 Stage 5a 之前做**，guide.json 才能用 `figure` 路徑引用）：
 
 ```bash
 python tools/extract_book_figures.py --input input/book.pdf --out work/08_bookfigs

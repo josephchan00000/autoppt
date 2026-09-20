@@ -6,8 +6,8 @@
 #   make split    Stage 2   → 停：人工確認章節清單
 #   make digest   Stage 3   逐章深讀（Claude Code 驅動）
 #   make research Stage 4   外部研究（Claude Code 驅動）
-#   make thesis   Stage 5a  印論證設計提示詞（Claude 寫 work/05a_thesis.json）
-#   make outline  Stage 5b  由 thesis.json 產藍圖 work/05_deck.json
+#   make guide    Stage 5a  印導讀設計提示詞（Claude 寫 work/05a_guide.json）
+#   make outline  Stage 5b  由 guide.json 產藍圖 work/05_deck.json
 #   make build    Stage 6+7 產 PPTX + 逐字稿 DOCX
 #   make qa       Stage 8   自動品管
 #   make revise   改稿迴圈：改完 deck.json 後重跑 6→8
@@ -18,7 +18,7 @@ PIP     := .venv/bin/pip
 BOOK    ?= $(firstword $(wildcard input/book.* input/*.pdf input/*.epub input/*.mobi))
 
 .DEFAULT_GOAL := help
-.PHONY: help setup check extract split digest research thesis outline build pptx script qa \
+.PHONY: help setup check extract split digest research guide outline build pptx script qa \
         revise preview check-sources clean-work clean-output distclean
 
 help:
@@ -57,8 +57,8 @@ check-sources:
 	$(PY) scripts/08_qa.py --check-sources
 
 # --- Stage 5 --------------------------------------------------------------
-thesis:
-	$(PY) scripts/05_outline.py --thesis-prompt
+guide:
+	$(PY) scripts/05_outline.py --guide-prompt
 
 outline:
 	$(PY) scripts/05_outline.py
@@ -87,7 +87,7 @@ revise: build qa
 # --- 清理 -----------------------------------------------------------------
 clean-work:
 	rm -rf work/01_raw/* work/02_chapters/* work/03_digest/* work/04_evidence/* \
-	       work/05a_thesis.json work/05_deck.json work/06_script.json
+	       work/04_author.json work/05a_guide.json work/05_deck.json work/06_script.json
 	@for d in work/01_raw work/02_chapters work/03_digest work/04_evidence; do touch $$d/.gitkeep; done
 
 clean-output:

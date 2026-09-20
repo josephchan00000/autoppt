@@ -3,8 +3,11 @@
 """Stage 8 — 自動品管（不可略過）。輸出 output/qa_report.md。
 
 任何一項 FAIL 就不准交付：
-    敘事結構  執行摘要在前；每幕有主張頁籤（主張句）／主張頁／證據頁／意涵頁；有反方頁；
-              無殘留【待填】。節奏（頁籤秒數、序幕佔比、單頁停留）只 WARN
+    敘事結構  導讀體：有作者頁、執行摘要在序幕；每一主線章有章名頁籤（官方章名或原文）／
+              大綱頁／示意圖或今天的數字；有全書意涵、反方、結語；無殘留【待填】。
+              節奏（頁籤秒數、序幕佔比、單頁停留）只 WARN
+    原書用字  每一主線章的投影片至少出現該章一個作者用語（digest.key_terms）；否則 WARN
+    故事      每一主線章的逐字稿要講到該章選的故事（大綱頁 story_hint 的人物）；否則 WARN
     條列樣式  文字頁必為 chain / labeled / prose 之一（裸條列 FAIL）；標籤 ≤5 字
     溢排      每頁內文估算行數 ≤ 8；主標 ≤ 14 字；副標 ≤ 21 字
     資料來源  每一頁（封面／頁籤／結尾除外）都有 sources，且非空字串
@@ -39,10 +42,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    BODY_STYLES, DECK_JSON, EVIDENCE, OUTPUT, TEMPLATE, _c, body_item_text, ensure_dirs,
+    BODY_STYLES, DECK_JSON, DIGEST, EVIDENCE, OUTPUT, TEMPLATE, _c, body_item_text, ensure_dirs,
     estimate_lines, format_timecode, has_concrete, have_cmd, info, is_appendix, limits,
-    load_project, load_spec, looks_like_topic, narration_chars, ok, read_json, soffice_bin,
-    step, talk_minutes_range, talk_slides, target_slides, visual_len, warn,
+    load_project, load_spec, narration_chars, ok, read_json, soffice_bin, step,
+    talk_minutes_range, talk_slides, target_slides, visual_len, warn,
 )
 
 ALLOWED_CUSTOM_SHAPES = {
@@ -51,7 +54,7 @@ ALLOWED_CUSTOM_SHAPES = {
     "VisualTitle", "VisualText", "QuoteBar", "QuoteText", "QuoteAttrib",
     "StatValue", "StatLabel", "TimelineAxis", "TimelineDot", "TimelineLabel",
     "FlowBox", "FlowArrow", "FlowCaption", "FlowLoopLabel",
-    "SplitBox", "SplitHeader", "SplitBody", "SplitCaption",
+    "SplitBox", "SplitHeader", "SplitBody", "SplitCaption", "DividerNote",
 }
 EA_EXPECT = "微軟正黑體"
 
@@ -129,9 +132,10 @@ def main() -> int:
             return 1
         step("deck.json 檢查")
         if args.check_deck:
-            results += [check_structure(deck), check_body_styles(deck), check_overflow(deck),
-                        check_sources(deck), check_concrete(deck), check_rhythm(deck),
-                        check_banned_terms(deck), check_page_count(deck)]
+            results += [check_structure(deck), check_wording(deck), check_stories(deck),
+                        check_body_styles(deck), check_overflow(deck), check_sources(deck),
+                        check_concrete(deck), check_rhythm(deck), check_banned_terms(deck),
+                        check_page_count(deck)]
         if args.check_narration:
             results.append(check_narration(deck))
         for r in results:
@@ -152,6 +156,8 @@ def main() -> int:
         return 1
 
     results.append(check_structure(deck))
+    results.append(check_wording(deck))
+    results.append(check_stories(deck))
     results.append(check_body_styles(deck))
     results.append(check_overflow(deck))
     results.append(check_sources(deck))
@@ -545,14 +551,15 @@ def _slide_blob(s: dict, include_narration: bool = False) -> str:
 
 
 def check_structure(deck: dict) -> Result:
-    r = Result("敘事結構", "執行摘要在前 3 頁；每幕有主張頁籤（主張句）／主張頁／證據頁／意涵頁；"
-                          "有反方頁；結語收尾；無殘留【待填】；節奏只 WARN")
+    r = Result("敘事結構", "導讀體：作者頁與執行摘要在序幕；每一主線章有章名頁籤（官方章名或原文）／"
+                          "大綱頁／示意圖或今天的數字；全書意涵、反方、結語；無殘留【待填】；節奏只 WARN")
     slides = slides_of(deck)
     talk = talk_slides(slides)
-    struct = (deck.get("meta") or {}).get("structure")
-    if not struct:
-        r.fail("deck.meta 沒有 structure：藍圖不是從 work/05a_thesis.json 生成的"
-               "（python scripts/05_outline.py --thesis-prompt）")
+    meta = deck.get("meta") or {}
+    struct = meta.get("structure")
+    if not struct or struct.get("form") != "guided":
+        r.fail("deck.meta.structure 不是導讀體：藍圖要從 work/05a_guide.json 生成"
+               "（python scripts/05_outline.py --guide-prompt）")
         return r
     if not talk:
         r.fail("沒有講述頁")
@@ -563,55 +570,65 @@ def check_structure(deck: dict) -> Result:
         r.fail(f"{len(todo)} 頁還有【待填】：{', '.join(todo[:12])}" + (" …" if len(todo) > 12 else ""))
 
     roles = [s.get("role") for s in talk]
-    if "summary" not in roles[:3]:
-        r.fail("執行摘要（role=summary）必須在前 3 頁：先給結論，再展開")
-    if "map" not in roles[:4]:
-        r.warn("沒有全書地圖頁（role=map）")
-    first_div = next((i for i, s in enumerate(talk) if s.get("role") == "divider"), None)
+    if "author" not in roles:
+        r.fail("沒有作者頁（role=author）：聽眾要先見到作者（python scripts/04_research.py --author）")
+    elif roles.index("author") > 4:
+        r.warn("作者頁太後面，應該緊接封面")
+    if "summary" not in roles[:8]:
+        r.fail("執行摘要（role=summary）要在序幕：作者頁之後、第一章之前")
+    if "map" not in roles[:9]:
+        r.warn("沒有章序地圖頁（role=map）")
+    first_div = next((i for i, s in enumerate(talk) if s.get("role") in ("divider", "part")), None)
     if first_div is None:
-        r.fail("沒有任何主張頁籤（role=divider）")
-    elif first_div > 5:
-        r.warn(f"第一幕頁籤到第 {first_div + 1} 頁才出現，序幕太長")
+        r.fail("沒有任何章名頁籤（role=divider）")
 
-    acts = struct.get("acts") or []
-    if not acts:
-        r.fail("meta.structure.acts 是空的")
-    n_ev = n_vis = 0
-    for a in acts:
-        aid = a.get("id")
-        mine = [s for s in talk if s.get("act") == aid]
+    names: set[str] = set()
+    for c in meta.get("chapters") or []:
+        for k in ("display", "title_en", "title"):
+            if c.get(k):
+                names.add(c[k].strip())
+    main = struct.get("main_ch_ids") or []
+    if not main:
+        r.fail("meta.structure.main_ch_ids 是空的")
+    n_ev = n_vis = n_today = 0
+    for cid in main:
+        mine = [s for s in talk if s.get("section") == cid]
         rc = Counter(s.get("role") for s in mine)
-        label = f"{aid}「{a.get('claim', '')}」"
+        cname = next((c.get("display") for c in meta.get("chapters") or [] if c["ch_id"] == cid), cid)
+        label = f"{cid}「{cname}」"
         if not rc.get("divider"):
-            r.fail(f"{label} 沒有頁籤（role=divider）")
-        if not rc.get("claim"):
-            r.fail(f"{label} 沒有主張頁（role=claim）")
-        ev = [s for s in mine if s.get("role") == "evidence"]
+            r.fail(f"{label} 沒有章名頁籤")
+        for s in mine:
+            if s.get("role") == "divider" and (s.get("title") or "").strip() not in names:
+                r.fail(f"{s.get('id')} 頁籤「{s.get('title')}」不是這本書的章名：用官方中譯或原文，不要自己改寫")
+        if not rc.get("outline"):
+            r.fail(f"{label} 沒有大綱頁（role=outline）")
+        ev = [s for s in mine if s.get("role") in ("evidence", "today")]
         n_ev += len(ev)
         if not ev:
-            r.fail(f"{label} 沒有證據頁（role=evidence）")
-        elif len(ev) == 1:
-            r.warn(f"{label} 只有 1 頁證據，深度不夠")
-        if not rc.get("implication"):
-            r.warn(f"{label} 沒有意涵頁（role=implication，對長期投資的意義）")
+            r.fail(f"{label} 沒有示意圖／重點／今天的數字（role=evidence|today）")
         vis = [s for s in ev if _is_visual_slide(s)]
         n_vis += len(vis)
         if ev and not vis:
-            r.warn(f"{label} 的證據頁全是文字，至少一頁要是圖／表／對照／流程")
-        for s in mine:
-            if s.get("role") == "divider":
-                why = looks_like_topic(s.get("title") or "")
-                if why:
-                    r.fail(f"{s.get('id')} 頁籤「{s.get('title')}」不是主張句（{why}）")
+            r.warn(f"{label} 沒有示意圖：至少一頁 flow／timeline／split／table 或書中原圖")
+        if rc.get("today"):
+            n_today += 1
+        else:
+            r.warn(f"{label} 沒有「今天的數字」頁（role=today）：書寫完之後這章的數字變了嗎")
 
+    idx_imp = [i for i, s in enumerate(talk) if s.get("role") == "implication"]
     idx_counter = [i for i, s in enumerate(talk) if s.get("role") == "counter"]
-    last_act = max((i for i, s in enumerate(talk) if s.get("act")), default=-1)
+    last_ch = max((i for i, s in enumerate(talk) if s.get("section") in set(main)), default=-1)
     idx_close = next((i for i, s in enumerate(talk) if s.get("role") == "closing"), None)
+    if not idx_imp:
+        r.fail("沒有全書意涵頁（role=implication）：對長期投資的意義")
+    elif idx_imp[0] < last_ch:
+        r.warn("全書意涵頁出現在章節中間，應該在所有章之後")
     if not idx_counter:
         r.fail("沒有反方頁（role=counter）：專業的讀書分享一定要講書站不住的地方")
     else:
-        if idx_counter[0] < last_act:
-            r.warn("反方頁出現在某一幕中間，應該在所有幕之後、結語之前")
+        if idx_counter[0] < last_ch:
+            r.warn("反方頁出現在章節中間，應該在所有章之後、結語之前")
         if idx_close is not None and idx_counter[-1] > idx_close:
             r.warn("反方頁排在結語之後")
     if idx_close is None:
@@ -641,11 +658,87 @@ def check_structure(deck: dict) -> Result:
     if first_div is not None and total:
         pro_sec = sum(int(s.get("duration_sec", 0)) for s in talk[:first_div])
         if pro_sec / total > pro_max:
-            r.warn(f"序幕佔 {pro_sec / total:.0%} > {pro_max:.0%}，聽眾等太久才進第一幕")
+            r.warn(f"序幕佔 {pro_sec / total:.0%} > {pro_max:.0%}（作者頁加執行摘要），聽眾等太久才進第一章")
 
     if r.status == "PASS":
-        r.note(f"{len(acts)} 幕、證據頁 {n_ev}（其中視覺 {n_vis}）、反方頁 {len(idx_counter)}"
-               + (f"、附錄 {len(app_idx)} 頁" if app_idx else ""))
+        r.note(f"主線 {len(main)} 章、示意圖／重點／今天 {n_ev} 頁（其中視覺 {n_vis}、今天的數字 {n_today} 章）、"
+               f"反方頁 {len(idx_counter)}" + (f"、附錄 {len(app_idx)} 頁" if app_idx else ""))
+    return r
+
+
+def _digest_of(ch_id: str) -> dict:
+    p = DIGEST / f"{ch_id}.json"
+    if not p.exists():
+        return {}
+    try:
+        return read_json(p) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _chapter_pages(deck: dict, ch_id: str) -> list[dict]:
+    return [s for s in talk_slides(slides_of(deck)) if s.get("section") == ch_id]
+
+
+# --- 原書用字（每一章的投影片要出現作者的用語）--------------------------------
+def check_wording(deck: dict) -> Result:
+    r = Result("原書用字", "每一主線章的投影片至少出現該章一個作者用語（digest.key_terms 的 en 或 zh）")
+    main = ((deck.get("meta") or {}).get("structure") or {}).get("main_ch_ids") or []
+    if not main:
+        r.skip("不是導讀體藍圖")
+        return r
+    missing, no_terms, hits = [], [], 0
+    for cid in main:
+        d = _digest_of(cid)
+        terms = [(kt.get("en") or "").strip().lower() for kt in (d.get("key_terms") or [])] + \
+                [(kt.get("zh") or "").strip() for kt in (d.get("key_terms") or [])]
+        terms = [x for x in terms if x]
+        if not terms:
+            no_terms.append(cid)
+            continue
+        blob = " ".join(_slide_blob(s) for s in _chapter_pages(deck, cid))
+        low = blob.lower()
+        if any(x in low for x in terms):
+            hits += 1
+        else:
+            missing.append(cid)
+    if no_terms:
+        r.warn(f"{len(no_terms)} 章的 digest 沒有 key_terms（先跑 03_digest.py --supplement）：{', '.join(no_terms[:8])}")
+    if missing:
+        r.warn(f"{len(missing)} 章的投影片沒有出現作者用語，主標或內文改用他的話：{', '.join(missing[:10])}")
+    if r.status == "PASS":
+        r.note(f"{hits}/{len(main)} 章的投影片都有作者用語")
+    return r
+
+
+# --- 故事（每一章的逐字稿要講到選定的故事）----------------------------------
+def check_stories(deck: dict) -> Result:
+    r = Result("故事", "每一主線章的逐字稿要講到該章選的故事（大綱頁 story_hint 的人物）")
+    main = ((deck.get("meta") or {}).get("structure") or {}).get("main_ch_ids") or []
+    if not main:
+        r.skip("不是導讀體藍圖")
+        return r
+    if not any((s.get("narration") or "").strip() for s in talk_slides(slides_of(deck))):
+        r.skip("逐字稿還沒寫，之後再檢查")
+        return r
+    missing, no_hint = [], []
+    for cid in main:
+        pages = _chapter_pages(deck, cid)
+        hint = next(((s.get("story_hint") or "") for s in pages if s.get("story_hint")), "")
+        if not hint:
+            no_hint.append(cid)
+            continue
+        who = re.split(r"[（(，,]", hint, 1)[0].strip()
+        narr = " ".join((s.get("narration") or "") for s in pages)
+        keys = [who] + [w for w in re.split(r"[\s・·]", who) if len(w) >= 2]
+        if not any(k and k.lower() in narr.lower() for k in keys):
+            missing.append(f"{cid}（{who}）")
+    if no_hint:
+        r.warn(f"{len(no_hint)} 章的大綱頁沒有 story_hint（藍圖不是最新版）：{', '.join(no_hint[:8])}")
+    if missing:
+        r.warn(f"{len(missing)} 章的逐字稿沒講到故事，開場用它：{', '.join(missing[:8])}")
+    if r.status == "PASS":
+        r.note(f"{len(main)} 章的逐字稿都講到了故事")
     return r
 
 
