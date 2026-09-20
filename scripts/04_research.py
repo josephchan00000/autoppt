@@ -247,7 +247,7 @@ def list_videos(ids: list[str]) -> int:
         print(f"      {v.get('url', '')}")
     print()
     info("要用哪一支就跑：python scripts/04_research.py --accept-video ch03:0")
-    info("（或直接在 make web 的第 5 段手動填）")
+    info("（或直接手改 config/project.yaml 的 videos[]）")
     return 0
 
 

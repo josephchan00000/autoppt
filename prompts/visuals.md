@@ -20,8 +20,9 @@
 | 這三點是不是兩組東西在對照（書中值 vs 最新值、作者 vs 官方）？ | `table` 或 `split` |
 | 這三點是不是散落在不同年代的幾個時間刻度？ | `timeline` |
 
-都不是，才用條列，而且**每頁最多 3 條**（`config/project.yaml` 的
-`bullets_l1_range`）。條數是上限不是目標，2 條講得清楚就不要湊成 3 條。
+都不是，才用文字，而且**文字頁只准三種樣式**（`style` 欄位，見 `prompts/outline.md`）：
+`chain` 論證鏈、`labeled` 標籤＋說明、`prose` 敘事段。裸條列 `08_qa.py` 判 FAIL。
+**每頁最多 3 條**（`config/project.yaml` 的 `bullets_l1_range`），條數是上限不是目標。
 
 **連續最多 2 頁條列**（`max_consecutive_bullet_slides`），第 3 頁一定要是
 視覺頁、引言頁或大數字頁。**全書視覺頁至少要佔四成**（`visual_slide_ratio_min`）。
@@ -39,7 +40,7 @@
 - 不可能畫錯，因為那就是作者的論據本身
 - 出處只要寫「《書名》書中圖表，p.XX」
 
-抽圖的方式：
+抽圖的方式（**在 Stage 5a 之前做**，thesis.json 才能用 `figure` 路徑引用）：
 
 ```bash
 python tools/extract_book_figures.py --input input/book.pdf --out work/08_bookfigs
@@ -52,10 +53,13 @@ python tools/extract_book_figures.py --input input/book.pdf --out work/08_bookfi
 deck.json 的寫法：
 
 ```json
-{ "kind": "chart", "image": { "path": "work/08_bookfigs/p163.png" },
-  "title": "書中的圖 8：四十年下行", "subtitle": "美國長期利率，1945–2021（%）",
+{ "kind": "chart", "role": "evidence", "act": "act2",
+  "image": { "path": "work/08_bookfigs/p163.png" },
+  "title": "四十年下行不是常態", "subtitle": "書中圖 8：美國長期利率，1945–2021（%）",
   "chart": null, "body": [], "sources": [{"label": "《時間的價格》書中圖表，p.163"}] }
 ```
+
+主標寫這張圖**要說的結論**，圖名與時間範圍放副標。
 
 ### 2. 外部機構的原圖
 
@@ -135,6 +139,7 @@ python tools/fetch_source_figure.py --url "https://…/chart.png" \
 - 引言從 Stage 3 的 `quotes[]` 挑，大數字從 `data_points[]` 或
   Stage 4 的 `taiwan_lens[].supporting_data` 挑
 - 一場 60 分鐘大約各放 3–4 頁，放太多就變成沒有內容
+- 放的位置有講究：一幕的主張頁之後、證據開展之前放引句最有力；大數字放在該幕最後一頁證據
 
 ### 5. 自己畫的圖表（最後手段）
 

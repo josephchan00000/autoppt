@@ -4,9 +4,11 @@
 
     python tools/make_fixtures.py --chapters 8
 
-會寫入 work/02_chapters/、work/03_digest/、work/04_evidence/。
+會寫入 work/02_chapters/、work/03_digest/、work/04_evidence/、work/05a_thesis.json。
 所有數值都是**假的**，source_title 都標了「測試資料」，不要拿去用。
 真書上線前記得 make clean-work。
+
+    python tools/make_fixtures.py --fill-narration   # 把藍圖的【待填】與逐字稿填成假文案（驗 6–8 用）
 """
 from __future__ import annotations
 
@@ -15,7 +17,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from _common import CHAPTERS, DIGEST, EVIDENCE, ensure_dirs, ok, step, write_json  # noqa: E402
+from _common import (  # noqa: E402
+    CHAPTERS, DIGEST, EVIDENCE, THESIS_JSON, ensure_dirs, is_appendix, ok, step, write_json,
+)
 
 TOPICS = [
     ("配置決定績效，選股扣成本後歸零", "資產配置"),
@@ -28,6 +32,13 @@ TOPICS = [
     ("報酬順序風險決定退休成敗", "提領階段"),
     ("指數化不是被動，是紀律外包", "指數化"),
     ("行為缺口吃掉三分之一的報酬", "行為缺口"),
+]
+
+# 主張句（≤14 字、不是主題名）：合成 thesis.json 的幕與短主張用
+SHORT_CLAIMS = [
+    "配置決定九成績效", "波動不是風險，虧損才是", "分散要跨因子不跨檔數", "成本是唯一確定的變數",
+    "再平衡賣的是情緒", "擇時的勝率門檻太高", "流動性只在不缺錢時存在", "報酬順序決定退休成敗",
+    "指數化是紀律外包", "行為缺口吃掉三成報酬",
 ]
 
 REAL_URLS = [
@@ -140,25 +151,97 @@ def main() -> int:
             }] if i % 2 == 1 else []),
         })
 
-    ok(f"{n} 章 → work/02_chapters/, work/03_digest/, work/04_evidence/")
+    write_thesis(n)
+    ok(f"{n} 章 → work/02_chapters/, work/03_digest/, work/04_evidence/, work/05a_thesis.json")
     print()
     print("  下一步：python scripts/05_outline.py --force")
     print("  用完清乾淨：make clean-work")
     return 0
 
 
+def write_thesis(n: int) -> None:
+    """合成的論證設計：把章節分成 3–4 幕，最後一章進附錄，證據引用只指向真的存在的編號。"""
+    ids = [f"ch{i:02d}" for i in range(1, n + 1)]
+    main_ids = ids[:-1] if n >= 4 else ids
+    appendix = ids[len(main_ids):]
+    k = 4 if len(main_ids) >= 8 else 3
+    size = -(-len(main_ids) // k)
+    groups = [main_ids[i:i + size] for i in range(0, len(main_ids), size)]
+    while len(groups) < 3:                     # 章數太少時拆到 3 幕
+        big = max(groups, key=len)
+        if len(big) < 2:
+            break
+        groups.remove(big)
+        groups += [big[:len(big) // 2], big[len(big) // 2:]]
+
+    acts = []
+    for gi, chunk in enumerate(groups):
+        first = chunk[0]
+        i0 = int(first[2:])
+        ev = [
+            {"ch_id": first, "kp": 0, "use": "撐住第一步：這是常見誤解", "visual": "labeled"},
+            {"ch_id": first, "data": 0, "use": "書中的數字", "visual": "stat"},
+            {"ch_id": first, "taiwan": 0, "use": "台灣的對照數字", "visual": "split"},
+            {"ch_id": first, "verified": 0, "use": "書中數字已過期，帶最新值", "visual": "table"},
+        ]
+        second = chunk[1] if len(chunk) > 1 else first
+        if int(second[2:]) % 2 == 1:
+            ev.append({"ch_id": second, "chart": 0, "use": "五年走勢要看形狀", "visual": "chart"})
+        else:
+            ev.append({"ch_id": second, "kp": 1, "use": "制度面的放大機制", "visual": "flow"})
+        acts.append({
+            "id": f"act{gi + 1}",
+            "claim": SHORT_CLAIMS[(i0 - 1) % len(SHORT_CLAIMS)],
+            "question": f"第 {gi + 1} 幕要回答的問題（測試）",
+            "support": ["因為多數人把它當技術問題（測試）", "所以換工具不會改變結果（測試）",
+                        "因此要改的是決策架構（測試）"],
+            "evidence": ev,
+            "implication": "把成本與持有期間寫回配置假設，再談選股（測試資料）",
+            "ch_ids": chunk,
+        })
+    write_json(THESIS_JSON, {
+        "book_claim": "長期報酬由配置與成本決定，選股與擇時扣除成本後貢獻歸零（測試）",
+        "book_claim_short": "配置與成本決定長期報酬",
+        "why_now": "升息之後每個假設都要重算",
+        "implication": "把折現率、成本與持有期間寫回配置假設，再談選股",
+        "acts": acts,
+        "counter": {
+            "claim": "資料全落在降息四十年",
+            "points": [
+                {"label": "取樣", "ch_id": ids[0],
+                 "text": "1990–2020 全在利率下行段，升息環境未驗證（測試）"},
+                {"label": "因果", "ch_id": ids[min(1, n - 1)],
+                 "text": "買回增加與投資下滑同時發生，未排除共同原因（測試）"},
+            ],
+        },
+        "closing": "先算配置，再談選股",
+        "appendix_ch_ids": appendix,
+    })
+
+
 # ---------------------------------------------------------------------------
+def _fill_todo(obj):
+    """把藍圖裡的【待填】換成假文案（帶數字，過得了具體性檢查）。"""
+    if isinstance(obj, str):
+        return "測試文案 3.1%（假資料）" if "【待填" in obj else obj
+    if isinstance(obj, list):
+        return [_fill_todo(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _fill_todo(v) for k, v in obj.items()}
+    return obj
+
+
 def fill_narration() -> int:
-    """把合成逐字稿寫進 work/05_deck.json 的 narration 欄位，
-    字數依各頁 duration_sec 反推（220 字/分），用來驗證 Stage 7–8。"""
-    import json
+    """把藍圖的【待填】換成假文案，再把合成逐字稿寫進 narration 欄位，
+    字數依各頁 duration_sec 反推（220 字/分），用來驗證 Stage 6–8。附錄頁不填。"""
     from _common import DECK_JSON, ok, step, read_json, write_json
 
     if not DECK_JSON.exists():
         print("找不到 work/05_deck.json，請先跑 05_outline.py")
         return 1
     deck = read_json(DECK_JSON)
-    step("填入合成逐字稿（測試用，非真實內容）")
+    step("填入假文案與合成逐字稿（測試用，非真實內容）")
+    deck["slides"] = [_fill_todo(s) for s in deck["slides"]]
 
     SENT = [
         "這邊先接著上一頁講。",
@@ -171,6 +254,8 @@ def fill_narration() -> int:
         "所以下一頁我想談的是，這個原則要怎麼改寫才適用。",
     ]
     for s in deck["slides"]:
+        if is_appendix(s):                     # 附錄不計時、不需逐字稿
+            continue
         # 影片頁只要進場與收尾的過場詞（30–120 字），不照 duration 反推
         if s.get("kind") == "video":
             v = s.get("video") or {}

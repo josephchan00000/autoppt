@@ -29,6 +29,5 @@ requests>=2.31.0
 # --- 影片頁 QR code ---
 qrcode>=8.0
 
-# --- 上傳頁（web/app.py；純 CLI 使用可不裝）---
-flask>=3.0
-ruamel.yaml>=0.18        # 存設定時保留 project.yaml 的註解
+# --- 寫回設定檔（04_research --accept-video、tools/repace_deck）---
+ruamel.yaml>=0.18        # round-trip 寫 project.yaml，保留註解

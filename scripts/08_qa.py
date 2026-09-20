@@ -2,17 +2,20 @@
 # -*- coding: utf-8 -*-
 """Stage 8 — 自動品管（不可略過）。輸出 output/qa_report.md。
 
-規劃書 §10 的九項檢查，任何一項 FAIL 就不准交付：
-    頁數      45 ≤ total ≤ 60
+任何一項 FAIL 就不准交付：
+    敘事結構  執行摘要在前；每幕有主張頁籤（主張句）／主張頁／證據頁／意涵頁；有反方頁；
+              無殘留【待填】。節奏（頁籤秒數、序幕佔比、單頁停留）只 WARN
+    條列樣式  文字頁必為 chain / labeled / prose 之一（裸條列 FAIL）；標籤 ≤5 字
     溢排      每頁內文估算行數 ≤ 8；主標 ≤ 14 字；副標 ≤ 21 字
     資料來源  每一頁（封面／頁籤／結尾除外）都有 sources，且非空字串
     外部連結  所有 url HTTP 200；死連結列出
     具體性    每頁 body 至少含一個數字／年份／專有名詞；否則標 WARN
     版型純度  每張 slide 的 layout name 必須在模板 11 種之內；無自建 textbox（資料來源行除外）
     字型      掃描所有 run，a:ea typeface 必須是 微軟正黑體
-    逐字稿    每頁 narration 字數 = duration_sec × 220/60 ±25%；總時長 50–58 分鐘
+    逐字稿    每頁都有 narration（附錄除外）；字數與總時長只 WARN——時間是指引，品質才是門檻
     節奏      連續條列頁 ≤ 2；視覺頁佔比 ≥ 40%
     對岸用語  黑名單掃描
+    頁數      參考區間，只 WARN
     視覺      LibreOffice 轉 PNG 全頁截圖，輸出到 output/preview/
 
 用法：
@@ -36,10 +39,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    DECK_JSON, EVIDENCE, OUTPUT, TEMPLATE, _c, ensure_dirs, estimate_lines,
-    format_timecode, has_concrete, have_cmd, info, limits, load_project, load_spec,
-    narration_chars, ok, read_json, soffice_bin, step, talk_minutes_range,
-    target_slides, visual_len, warn,
+    BODY_STYLES, DECK_JSON, EVIDENCE, OUTPUT, TEMPLATE, _c, body_item_text, ensure_dirs,
+    estimate_lines, format_timecode, has_concrete, have_cmd, info, is_appendix, limits,
+    load_project, load_spec, looks_like_topic, narration_chars, ok, read_json, soffice_bin,
+    step, talk_minutes_range, talk_slides, target_slides, visual_len, warn,
 )
 
 ALLOWED_CUSTOM_SHAPES = {
@@ -126,9 +129,9 @@ def main() -> int:
             return 1
         step("deck.json 檢查")
         if args.check_deck:
-            results += [check_page_count(deck), check_overflow(deck), check_sources(deck),
-                        check_concrete(deck), check_rhythm(deck),
-                        check_banned_terms(deck)]
+            results += [check_structure(deck), check_body_styles(deck), check_overflow(deck),
+                        check_sources(deck), check_concrete(deck), check_rhythm(deck),
+                        check_banned_terms(deck), check_page_count(deck)]
         if args.check_narration:
             results.append(check_narration(deck))
         for r in results:
@@ -148,7 +151,8 @@ def main() -> int:
         print(_c("31", "  ✗ 找不到 work/05_deck.json，請先跑 05_outline.py"))
         return 1
 
-    results.append(check_page_count(deck))
+    results.append(check_structure(deck))
+    results.append(check_body_styles(deck))
     results.append(check_overflow(deck))
     results.append(check_sources(deck))
     results.append(check_links(collect_urls_from_deck(deck), args.timeout))
@@ -158,6 +162,7 @@ def main() -> int:
     results.append(check_fonts(pptx))
     results.append(check_narration(deck))
     results.append(check_banned_terms(deck))
+    results.append(check_page_count(deck))
     results.append(make_preview(pptx))
 
     for r in results:
@@ -188,37 +193,21 @@ def slides_of(deck: dict) -> list[dict]:
     return deck.get("slides", [])
 
 
-# --- 1. 頁數 --------------------------------------------------------------
+# --- 頁數（參考值，只 WARN）--------------------------------------------------
 def check_page_count(deck: dict) -> Result:
-    """頁數是代理指標，真正的交付門檻是總時長。
-
-    逐字稿寫完之後，每頁要講多久是量得出來的，總時長合格就代表這份簡報
-    講得完——這時頁數超標只是「頁面比較碎」，降為 WARN。
-    逐字稿還沒寫完時沒有別的訊號可用，頁數仍然是 FAIL。
-    """
+    """頁數只是參考：品質優先，不裁頁。講得完不完看「逐字稿」那一項的總時長。"""
     lo, hi = target_slides()
-    slides = slides_of(deck)
-    n = len(slides)
-    r = Result("頁數", f"{lo} ≤ total ≤ {hi}（逐字稿完整且時長合格時降為參考值）")
-
-    narrated = sum(1 for s in slides if (s.get("narration") or "").strip())
-    total_sec = sum(int(s.get("duration_sec", 0)) for s in slides)
-    lo_m, hi_m = talk_minutes_range()
-    time_ok = bool(slides) and narrated == n and lo_m * 60 <= total_sec <= hi_m * 60
-
+    talk = talk_slides(slides_of(deck))
+    n_app = len(slides_of(deck)) - len(talk)
+    n = len(talk)
+    r = Result("頁數", f"講述頁 {lo}–{hi} 為參考區間（只 WARN，不裁頁）")
+    tail = f"（另有附錄 {n_app} 頁不計）" if n_app else ""
     if lo <= n <= hi:
-        r.note(f"{n} 頁")
-        return r
-
-    msg = (f"只有 {n} 頁，低於下限 {lo}" if n < lo else f"共 {n} 頁，高於上限 {hi}")
-    if time_ok:
-        r.warn(msg + f"，但逐字稿完整且總時長 {format_timecode(total_sec)} "
-                     f"落在 {lo_m}–{hi_m} 分鐘內，講得完")
-        r.note("頁數偏離多半代表視覺頁比例高（引言頁、大數字頁本來就只有 20 秒），"
-               "不是問題")
+        r.note(f"{n} 頁講述頁{tail}")
     else:
-        r.fail(msg + ("" if narrated == n else f"（逐字稿只寫了 {narrated}/{n} 頁，"
-                                              "無法用時間判定）"))
+        r.warn((f"講述頁只有 {n} 頁，低於參考下限 {lo}" if n < lo
+                else f"講述頁 {n} 頁，高於參考上限 {hi}") + tail)
+        r.note("視覺頁多的簡報本來就頁數多、每頁短；看逐字稿的總時長才準")
     return r
 
 
@@ -257,26 +246,31 @@ def check_overflow(deck: dict) -> Result:
             if visual_len(sub) > scap:
                 r.fail(f"{sid} 副標 {visual_len(sub):.0f} 字 > {scap}：「{sub[:30]}」")
 
-        lines = estimate_lines(body, 24)
+        style = s.get("style") if s.get("style") in BODY_STYLES else None
+        if kind == "divider" and visual_len(title) > t_max:
+            r.warn(f"{sid} 頁籤 {visual_len(title):.0f} 字 > {t_max}，44pt 會折成三行")
+
+        lines = estimate_lines(body, 24, style)
         if lines > max_lines:
             r.fail(f"{sid} 內文估算 {lines} 行 > {max_lines}（24pt）")
 
-        total = sum(visual_len(b.get("text") or "") for b in body)
+        total = sum(visual_len(body_item_text(style, b, i)) for i, b in enumerate(body))
         if total > b_max:
             r.fail(f"{sid} 內文總字數 {total:.0f} > {b_max}")
 
         for b in body:
             lv = int(b.get("level", 0))
-            if lv > max_lv:
+            if lv > max_lv and kind != "cover":
                 r.fail(f"{sid} 出現第 {lv + 1} 層（最多 {max_lv + 1} 層）")
-            if lv == 0 and visual_len(b.get("text") or "") > l1_max:
-                r.fail(f"{sid} 第一層要點 {visual_len(b.get('text') or ''):.0f} 字 > {l1_max}")
+            # prose 的段落上限另外在「條列樣式」檢查
+            if lv == 0 and style != "prose" and visual_len(b.get("text") or "") > l1_max:
+                r.fail(f"{sid} 要點 {visual_len(b.get('text') or ''):.0f} 字 > {l1_max}")
 
-        if kind == "content":
+        if kind == "content" and style != "prose":
             l1 = [b for b in body if int(b.get("level", 0)) == 0]
-            blo, bhi = lim.get("bullets_l1_range", [3, 5])
+            blo, bhi = lim.get("bullets_l1_range", [2, 3])
             if l1 and not (blo <= len(l1) <= bhi):
-                r.warn(f"{sid} 第一層要點 {len(l1)} 條，建議 {blo}–{bhi} 條")
+                r.warn(f"{sid} 要點 {len(l1)} 條，建議 {blo}–{bhi} 條")
     if r.status == "PASS":
         r.note(f"{len(slides_of(deck))} 頁全部在版面容量內")
     return r
@@ -490,8 +484,9 @@ def check_narration(deck: dict) -> Result:
     tol = float(cfg.get("tolerance", 0.25))
     lo_m, hi_m = talk_minutes_range()
 
-    r = Result("逐字稿", f"每頁字數 = duration_sec × {cpm}/60 ±{tol:.0%}；總時長 {lo_m}–{hi_m} 分鐘")
-    slides = slides_of(deck)
+    r = Result("逐字稿", f"每頁都有 narration（附錄除外）；字數 = duration_sec × {cpm}/60 "
+                        f"±{tol:.0%} 與總時長 {lo_m}–{hi_m} 分鐘只 WARN")
+    slides = talk_slides(slides_of(deck))
     empty = []
     total_sec = 0
     video_sec = 0
@@ -530,7 +525,9 @@ def check_narration(deck: dict) -> Result:
 
     m, sec = divmod(total_sec, 60)
     if not (lo_m * 60 <= total_sec <= hi_m * 60):
-        r.fail(f"總時長 {m}:{sec:02d} 不在 {lo_m}–{hi_m} 分鐘區間")
+        r.warn(f"總時長 {m}:{sec:02d} 不在 {lo_m}–{hi_m} 分鐘區間。時間是指引："
+               "超時就把次要證據頁移到附錄（role=appendix），不要刪內容；"
+               "或 python tools/repace_deck.py 重新配速")
     else:
         r.note(f"總時長 {m}:{sec:02d}")
     if video_sec:
@@ -540,7 +537,181 @@ def check_narration(deck: dict) -> Result:
 
 
 
-# --- 10. 節奏（條列頁不要連成一片）-----------------------------------------
+# --- 敘事結構（金字塔：先結論，每幕主張→證據→意涵，反方在後）------------------
+def _slide_blob(s: dict, include_narration: bool = False) -> str:
+    import json
+    return json.dumps({k: v for k, v in s.items() if include_narration or k != "narration"},
+                      ensure_ascii=False)
+
+
+def check_structure(deck: dict) -> Result:
+    r = Result("敘事結構", "執行摘要在前 3 頁；每幕有主張頁籤（主張句）／主張頁／證據頁／意涵頁；"
+                          "有反方頁；結語收尾；無殘留【待填】；節奏只 WARN")
+    slides = slides_of(deck)
+    talk = talk_slides(slides)
+    struct = (deck.get("meta") or {}).get("structure")
+    if not struct:
+        r.fail("deck.meta 沒有 structure：藍圖不是從 work/05a_thesis.json 生成的"
+               "（python scripts/05_outline.py --thesis-prompt）")
+        return r
+    if not talk:
+        r.fail("沒有講述頁")
+        return r
+
+    todo = [str(s.get("id")) for s in slides if "【待填" in _slide_blob(s)]
+    if todo:
+        r.fail(f"{len(todo)} 頁還有【待填】：{', '.join(todo[:12])}" + (" …" if len(todo) > 12 else ""))
+
+    roles = [s.get("role") for s in talk]
+    if "summary" not in roles[:3]:
+        r.fail("執行摘要（role=summary）必須在前 3 頁：先給結論，再展開")
+    if "map" not in roles[:4]:
+        r.warn("沒有全書地圖頁（role=map）")
+    first_div = next((i for i, s in enumerate(talk) if s.get("role") == "divider"), None)
+    if first_div is None:
+        r.fail("沒有任何主張頁籤（role=divider）")
+    elif first_div > 5:
+        r.warn(f"第一幕頁籤到第 {first_div + 1} 頁才出現，序幕太長")
+
+    acts = struct.get("acts") or []
+    if not acts:
+        r.fail("meta.structure.acts 是空的")
+    n_ev = n_vis = 0
+    for a in acts:
+        aid = a.get("id")
+        mine = [s for s in talk if s.get("act") == aid]
+        rc = Counter(s.get("role") for s in mine)
+        label = f"{aid}「{a.get('claim', '')}」"
+        if not rc.get("divider"):
+            r.fail(f"{label} 沒有頁籤（role=divider）")
+        if not rc.get("claim"):
+            r.fail(f"{label} 沒有主張頁（role=claim）")
+        ev = [s for s in mine if s.get("role") == "evidence"]
+        n_ev += len(ev)
+        if not ev:
+            r.fail(f"{label} 沒有證據頁（role=evidence）")
+        elif len(ev) == 1:
+            r.warn(f"{label} 只有 1 頁證據，深度不夠")
+        if not rc.get("implication"):
+            r.warn(f"{label} 沒有意涵頁（role=implication，對長期投資的意義）")
+        vis = [s for s in ev if _is_visual_slide(s)]
+        n_vis += len(vis)
+        if ev and not vis:
+            r.warn(f"{label} 的證據頁全是文字，至少一頁要是圖／表／對照／流程")
+        for s in mine:
+            if s.get("role") == "divider":
+                why = looks_like_topic(s.get("title") or "")
+                if why:
+                    r.fail(f"{s.get('id')} 頁籤「{s.get('title')}」不是主張句（{why}）")
+
+    idx_counter = [i for i, s in enumerate(talk) if s.get("role") == "counter"]
+    last_act = max((i for i, s in enumerate(talk) if s.get("act")), default=-1)
+    idx_close = next((i for i, s in enumerate(talk) if s.get("role") == "closing"), None)
+    if not idx_counter:
+        r.fail("沒有反方頁（role=counter）：專業的讀書分享一定要講書站不住的地方")
+    else:
+        if idx_counter[0] < last_act:
+            r.warn("反方頁出現在某一幕中間，應該在所有幕之後、結語之前")
+        if idx_close is not None and idx_counter[-1] > idx_close:
+            r.warn("反方頁排在結語之後")
+    if idx_close is None:
+        r.fail("沒有結語頁（role=closing）")
+    elif idx_close != len(talk) - 1:
+        r.warn("結語不是最後一張講述頁")
+    app_idx = [i for i, s in enumerate(slides) if is_appendix(s)]
+    close_abs = next((i for i, s in enumerate(slides) if s.get("role") == "closing"), None)
+    if app_idx and close_abs is not None and min(app_idx) < close_abs:
+        r.warn("附錄頁出現在結語之前，附錄應該全部排在結語之後")
+
+    # 節奏指引（config pacing）：只 WARN
+    pacing = load_project().get("pacing") or {}
+    d_max = int(pacing.get("divider_max_sec", 20))
+    qs_max = int(pacing.get("quote_stat_max_sec", 30))
+    p_max = int(pacing.get("page_max_sec", 120))
+    pro_max = float(pacing.get("prologue_share_max", 0.15))
+    total = sum(int(s.get("duration_sec", 0)) for s in talk)
+    for s in talk:
+        dur, sid = int(s.get("duration_sec", 0)), s.get("id")
+        if s.get("kind") == "divider" and dur > d_max:
+            r.warn(f"{sid} 頁籤 {dur} 秒 > {d_max}：頁籤只講一句話")
+        elif (s.get("quote") or s.get("stat")) and dur > qs_max:
+            r.warn(f"{sid} 引言／大數字頁 {dur} 秒 > {qs_max}：那是節奏工具，不停留")
+        elif s.get("kind") != "video" and dur > p_max:
+            r.warn(f"{sid} 停留 {dur} 秒 > {p_max}：拆頁")
+    if first_div is not None and total:
+        pro_sec = sum(int(s.get("duration_sec", 0)) for s in talk[:first_div])
+        if pro_sec / total > pro_max:
+            r.warn(f"序幕佔 {pro_sec / total:.0%} > {pro_max:.0%}，聽眾等太久才進第一幕")
+
+    if r.status == "PASS":
+        r.note(f"{len(acts)} 幕、證據頁 {n_ev}（其中視覺 {n_vis}）、反方頁 {len(idx_counter)}"
+               + (f"、附錄 {len(app_idx)} 頁" if app_idx else ""))
+    return r
+
+
+# --- 條列樣式（不准裸條列）----------------------------------------------------
+def check_body_styles(deck: dict) -> Result:
+    lim = limits()
+    styles = tuple(lim.get("body_styles") or BODY_STYLES)
+    label_max = int(lim.get("label_max_chars", 5))
+    c_lo, c_hi = (lim.get("chain_steps_range") or [2, 4])[:2]
+    p_max = int(lim.get("prose_paragraphs_max", 2))
+    p_chars = int(lim.get("prose_paragraph_max_chars", 90))
+    b_lo, b_hi = (lim.get("bullets_l1_range") or [2, 3])[:2]
+    l1_max = int(lim.get("bullet_l1_max_chars", 40))
+
+    r = Result("條列樣式", f"文字頁必為 {'/'.join(styles)} 之一；標籤 ≤{label_max} 字；"
+                          f"鏈 {c_lo}–{c_hi} 步；敘事 ≤{p_max} 段、每段 ≤{p_chars} 字")
+    counts: Counter = Counter()
+    for s in slides_of(deck):
+        if s.get("kind") != "content":
+            continue
+        body = [b for b in (s.get("body") or []) if (b.get("text") or "").strip()]
+        if not body:
+            continue
+        sid, style = s.get("id"), s.get("style")
+        if style not in styles:
+            r.fail(f"{sid} 是裸條列（style={style!r}）：改成 chain（論證鏈）／"
+                   "labeled（標籤＋說明）／prose（敘事段）之一，見 prompts/outline.md")
+            continue
+        counts[style] += 1
+        if any(int(b.get("level", 0)) > 0 for b in body):
+            r.fail(f"{sid} {style} 樣式不准有第二層（level>0）")
+        if style == "labeled":
+            if not (b_lo <= len(body) <= b_hi):
+                r.warn(f"{sid} labeled {len(body)} 條，建議 {b_lo}–{b_hi} 條")
+            labels = []
+            for b in body:
+                lab = (b.get("label") or "").strip()
+                if not lab:
+                    r.fail(f"{sid} labeled 樣式每一條都要有 label")
+                elif visual_len(lab) > label_max:
+                    r.fail(f"{sid} 標籤「{lab}」{visual_len(lab):.0f} 字 > {label_max}")
+                labels.append(lab)
+            if len(set(labels)) < len(labels):
+                r.warn(f"{sid} 標籤重複：{labels}")
+        elif style == "chain":
+            if not (c_lo <= len(body) <= c_hi):
+                r.fail(f"{sid} chain {len(body)} 步，必須 {c_lo}–{c_hi} 步")
+        else:                                                    # prose
+            if len(body) > p_max:
+                r.fail(f"{sid} prose {len(body)} 段 > {p_max}")
+            for b in body:
+                n = visual_len(b.get("text") or "")
+                if n > p_chars:
+                    r.fail(f"{sid} prose 段落 {n:.0f} 字 > {p_chars}")
+    total = sum(counts.values())
+    if total >= 6:
+        top, n = counts.most_common(1)[0]
+        if n / total > 0.7:
+            r.warn(f"文字頁 {n}/{total} 都是 {top}，三種樣式要混用：機制用 chain、"
+                   "對照用 labeled、有故事的用 prose")
+    if r.status == "PASS":
+        r.note("、".join(f"{k}×{v}" for k, v in counts.items()) or "沒有文字頁")
+    return r
+
+
+# --- 節奏（條列頁不要連成一片）------------------------------------------------
 VISUAL_KEYS = ("image", "flow", "timeline", "table", "split", "quote", "stat", "chart")
 
 
@@ -562,8 +733,8 @@ def check_rhythm(deck: dict) -> Result:
     max_run = int(lim.get("max_consecutive_bullet_slides", 2))
     min_ratio = float(lim.get("visual_slide_ratio_min", 0.40))
 
-    r = Result("節奏", f"連續條列頁 ≤ {max_run}；視覺頁佔比 ≥ {min_ratio:.0%}")
-    slides = slides_of(deck)
+    r = Result("節奏", f"連續條列頁 ≤ {max_run}；視覺頁佔比 ≥ {min_ratio:.0%}（附錄不計）")
+    slides = talk_slides(slides_of(deck))
     if not slides:
         r.skip("沒有投影片")
         return r
@@ -611,11 +782,7 @@ def check_banned_terms(deck: dict) -> Result:
     hits: Counter = Counter()
     where: dict[str, list[str]] = {}
     for s in slides_of(deck):
-        blob = " ".join([
-            s.get("title") or "", s.get("subtitle") or "",
-            " ".join((b.get("text") or "") for b in (s.get("body") or [])),
-            s.get("narration") or "",
-        ])
+        blob = _slide_blob(s, include_narration=True)
         for term in banned:
             if term and term in blob:
                 hits[term] += blob.count(term)

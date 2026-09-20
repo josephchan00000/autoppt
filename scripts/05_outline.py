@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Stage 5 — 投影片藍圖 work/05_deck.json。
+"""Stage 5 — 論證設計 → 投影片藍圖。
 
-把 03_digest + 04_evidence 合成藍圖，算好頁數預算與版面分派。
-文案潤飾由 Claude Code 依 prompts/outline.md 接手，這支只負責「骨架與配額」。
+5a  --thesis-prompt    印「論證設計」提示詞：全書 digest / evidence 的濃縮索引 + 規則，
+                       Claude 讀完寫 work/05a_thesis.json（prompts/thesis.md）
+    --validate-thesis  驗 thesis.json：欄位、字數、每筆 evidence 的編號都要對得上
+5b  （預設）           由 thesis.json 生成 work/05_deck.json 骨架，文案由 Claude 依
+                       prompts/outline.md 潤飾
 
-頁數預算（規劃書 §7.1，60 分鐘 / 45–60 頁）：
-    封面              標題 (0)                    1
-    全書地圖/Agenda   目錄 (1)                    1–2
-    為什麼讀這本書    內頁1-1 (4)                 1
-    每章：章節頁籤    頁籤 (2)                    1 × N
-    每章：核心主張    內頁1-1 (4)                 1 × N
-    每章：論點展開    內頁1-1 (4)                 1–2 × N
-    每章：台灣對照    內頁2-1 (6) 或 空白內頁 (9) 1 × N
-    全書綜合          內頁3-1 (8)                 2–3
-    可落地的行動      內頁3-1 (8)                 1–2
-    我的異議          內頁2-1 (6)                 1
-    結語 / Q&A        結尾 (10)                   1
+金字塔結構：
+    序幕   封面 → 執行摘要（主張／證據／意義）→ 全書地圖（N 個主張句）
+    每幕   主張頁籤 → 主張頁（論證鏈）→ 證據頁 ×2–8 → 意涵頁（對長期投資）
+    反方   本書站不住的地方
+    結語   一句收束 + Q&A
+    附錄   未進主線的章、沒用到的過期數據（不計時、不需逐字稿）
 
-若書超過 10 章，自動合併相鄰章節成「主題群組」，每群組共用一個頁籤頁。
+沒有頁數預算、不裁頁：品質優先。時間只在 08_qa 當 WARN。
 """
 from __future__ import annotations
 
@@ -29,53 +26,70 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    DECK_JSON, DIGEST, EVIDENCE, LAYOUT_FAMILIES, chapter_files, die, ensure_dirs,
-    estimate_lines, family_layouts, format_timecode, info, layout_family, limits,
-    load_project, ok, parse_chapter_file, read_json, step, talk_minutes_range,
-    target_slides,
+    DECK_JSON, DIGEST, EVIDENCE, LAYOUT_FAMILIES, PROMPTS, ROOT, ROLE_LABELS, THESIS_JSON,
+    WORK, chapter_files, check_keys, die, ensure_dirs, fail, family_layouts,
+    format_timecode, info, is_appendix, layout_family, load_project, looks_like_topic, ok,
+    parse_chapter_file, read_json, step, talk_minutes_range, target_slides,
     tone_directive, tone_key, tone_preset, videos, visual_len, warn, write_json,
 )
 
-# 版面 index（config/fh_template_spec.json）
-# 固定的：封面／目錄／頁籤／空白內頁／結尾
-L_COVER, L_TOC, L_DIVIDER = 0, 1, 2
-L_BLANK = 9         # 空白內頁（整頁圖表與影片頁）
-L_CLOSING = 10
-# 內頁三組（主力／次要／第三）由 config/project.yaml 的 deck.layout_family 決定，
-# 在 build_slides() 內取得，不寫死。
+# 固定版面：封面／目錄／頁籤／空白內頁／結尾（config/fh_template_spec.json）
+L_COVER, L_TOC, L_DIVIDER, L_BLANK, L_CLOSING = 0, 1, 2, 9, 10
 
-MAX_CHAPTERS_BEFORE_GROUPING = 10
+TODO = "【待填】"
+PROMPT_FILE = PROMPTS / "thesis.md"
+
+EVIDENCE_REF_KEYS = ("kp", "quote", "data", "figure", "taiwan", "verified", "chart", "extension")
+VISUALS = ("image", "table", "split", "flow", "timeline", "stat", "quote", "chart",
+           "labeled", "chain", "prose")
 
 
+# ==========================================================================
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Stage 5：投影片藍圖")
+    ap = argparse.ArgumentParser(description="Stage 5：論證設計 → 藍圖")
+    ap.add_argument("--thesis-prompt", action="store_true",
+                    help="5a：印論證設計提示詞（Claude 讀完寫 work/05a_thesis.json）")
+    ap.add_argument("--validate-thesis", action="store_true", help="驗 work/05a_thesis.json")
     ap.add_argument("--force", action="store_true", help="覆寫既有的 05_deck.json")
-    ap.add_argument("--dry-run", action="store_true", help="只印頁數預算，不寫檔")
+    ap.add_argument("--dry-run", action="store_true", help="只印頁面清單，不寫檔")
     args = ap.parse_args()
 
     ensure_dirs()
     cfg = load_project()
+    chapters = load_chapters()
+    if not chapters:
+        die("沒有可用的章節資料。請先跑 Stage 2–4。")
+
+    if args.thesis_prompt:
+        return emit_thesis_prompt(chapters, cfg)
+
+    if args.validate_thesis:
+        return run_validate_thesis(chapters)
+
+    if not THESIS_JSON.exists():
+        die(f"找不到 {THESIS_JSON}\n"
+            "  這一版的藍圖是從「論證設計」長出來的，不是照章節排：\n"
+            "    python scripts/05_outline.py --thesis-prompt   # 印提示詞，依 prompts/thesis.md 寫 thesis.json\n"
+            "    python scripts/05_outline.py --validate-thesis\n"
+            "    python scripts/05_outline.py                   # 再回來產藍圖")
+    thesis = read_json(THESIS_JSON)
+    errs = validate_thesis(thesis, chapters)
+    if errs:
+        for e in errs:
+            fail(e)
+        die(f"thesis.json 有 {len(errs)} 項不合格，修好再產藍圖")
 
     if DECK_JSON.exists() and not args.force and not args.dry_run:
         die(f"{DECK_JSON} 已存在。要重建請加 --force\n"
             "（注意：--force 會蓋掉你手改過的文案。改稿迴圈請直接改 deck.json 再跑 Stage 6–8）")
 
-    chapters = load_chapters()
-    if not chapters:
-        die("沒有可用的章節資料。請先跑 Stage 2–4。")
-
-    step(f"Stage 5 藍圖生成（{len(chapters)} 章）")
+    step(f"Stage 5b 藍圖生成（{len(thesis['acts'])} 幕，{len(chapters)} 章）")
     fam = LAYOUT_FAMILIES[layout_family()]
     info(f"內頁色系：{fam['label']}（內頁{layout_family()} / {layout_family()}-1）"
          f"　語氣：{tone_preset().get('label', tone_key())}")
 
-    groups = group_chapters(chapters)
-    if len(groups) != len(chapters):
-        ok(f"超過 {MAX_CHAPTERS_BEFORE_GROUPING} 章，已合併為 {len(groups)} 個主題群組")
-
-    slides = build_slides(chapters, groups, cfg)
-    slides = trim_to_budget(slides)
-    slides = assign_durations(slides, cfg)
+    slides = build_slides(thesis, chapters, cfg)
+    slides = assign_durations(slides)
 
     deck = {
         "meta": {
@@ -87,34 +101,41 @@ def main() -> int:
             "date": cfg["presenter"].get("date", ""),
             "minutes": cfg["deck"].get("minutes", 60),
             "layout_family": layout_family(),
-            "layout_family_label": LAYOUT_FAMILIES[layout_family()]["label"],
+            "layout_family_label": fam["label"],
             "tone": tone_key(),
             "tone_directive_slide": tone_directive("slide"),
             "tone_directive_narration": tone_directive("narration"),
+            "structure": {
+                "book_claim": thesis["book_claim"],
+                "book_claim_short": thesis["book_claim_short"],
+                "acts": [{"id": a["id"], "claim": a["claim"], "question": a["question"],
+                          "ch_ids": a["ch_ids"]} for a in thesis["acts"]],
+                "counter_claim": thesis["counter"]["claim"],
+                "closing": thesis["closing"],
+                "appendix_ch_ids": thesis.get("appendix_ch_ids") or [],
+            },
             "chapters": [{"ch_id": c["ch_id"], "title": c["title"]} for c in chapters],
-            "groups": [{"name": g["name"], "ch_ids": g["ch_ids"]} for g in groups],
         },
         "slides": slides,
     }
 
-    print_budget(slides, cfg)
-
+    print_summary(slides)
     if args.dry_run:
         info("--dry-run：未寫檔")
         return 0
 
-    for sl in deck["slides"]:
-        sl.pop("_trim", None)          # 內部裁切標記，不寫進 deck.json
     write_json(DECK_JSON, deck)
     ok(f"藍圖 → {DECK_JSON}（{len(slides)} 頁）")
     print()
     info("→ 停：接下來是最省時的修改點。")
-    info("   1) Claude Code 依 prompts/outline.md 潤飾 work/05_deck.json 文案")
-    info("   2) 你直接讀 work/05_deck.json 改字")
-    info("   3) python scripts/08_qa.py --check-deck  驗證文案規則")
+    info("   1) Claude 依 prompts/outline.md 潤飾 work/05_deck.json（把所有【待填】補掉）")
+    info("   2) 視覺頁另讀 prompts/visuals.md")
+    info("   3) python scripts/08_qa.py --check-deck  驗證文案與結構")
     return 0
 
 
+# ==========================================================================
+# 資料載入
 # ==========================================================================
 def load_chapters() -> list[dict]:
     """把 02/03/04 三層資料併起來。缺 digest 的章節會被略過並警告。"""
@@ -129,7 +150,7 @@ def load_chapters() -> list[dict]:
         digest = read_json(dp)
         evidence = read_json(ep) if ep.exists() else {}
         if not ep.exists():
-            warn(f"{ch_id} 缺 evidence，台灣對照頁會留空殼（跑 04_research.py 補上）")
+            warn(f"{ch_id} 缺 evidence，外部證據會留空（跑 04_research.py 補上）")
         out.append({
             "ch_id": ch_id,
             "title": digest.get("title") or meta.get("title") or ch_id,
@@ -140,39 +161,273 @@ def load_chapters() -> list[dict]:
     return out
 
 
-def group_chapters(chapters: list[dict]) -> list[dict]:
-    """超過 10 章就合併相鄰章節成主題群組，每群組共用一個頁籤頁。"""
-    n = len(chapters)
-    if n <= MAX_CHAPTERS_BEFORE_GROUPING:
-        return [{"name": c["title"], "ch_ids": [c["ch_id"]], "chapters": [c]} for c in chapters]
-
-    target = MAX_CHAPTERS_BEFORE_GROUPING
-    size = -(-n // target)  # ceil
-    groups = []
-    for i in range(0, n, size):
-        chunk = chapters[i:i + size]
-        groups.append({
-            "name": _group_name(chunk),
-            "ch_ids": [c["ch_id"] for c in chunk],
-            "chapters": chunk,
-        })
-    return groups
+def chapter_map(chapters: list[dict]) -> dict[str, dict]:
+    return {c["ch_id"]: c for c in chapters}
 
 
-def _group_name(chunk: list[dict]) -> str:
-    """群組名：取首章標題去掉「第N章」前綴，加「等 N 章」。"""
-    first = re.sub(r"^\s*第\s*[0-9一二三四五六七八九十百]+\s*[章節課篇回講]\s*", "",
-                   chunk[0]["title"]).strip()
-    if len(chunk) == 1:
-        return first or chunk[0]["title"]
-    return f"{first} 等 {len(chunk)} 章"
+def available_figures() -> list[str]:
+    figs = sorted(str(p.relative_to(ROOT)) for p in (WORK / "08_bookfigs").glob("*.png"))
+    figs += sorted(str(p.relative_to(ROOT)) for p in (WORK / "09_srcfigs").glob("*.png"))
+    return figs
 
 
 # ==========================================================================
-def build_slides(chapters: list[dict], groups: list[dict], cfg: dict) -> list[dict]:
+# 5a：論證設計提示詞
+# ==========================================================================
+def emit_thesis_prompt(chapters: list[dict], cfg: dict) -> int:
+    if not PROMPT_FILE.exists():
+        die(f"找不到提示詞：{PROMPT_FILE}")
+    tpl = PROMPT_FILE.read_text(encoding="utf-8")
+    book = cfg["book"]
+    figs = available_figures()
+    fig_text = "\n".join(f"- `{f}`" for f in figs) if figs else \
+        "（還沒抽圖：python tools/extract_book_figures.py --input input/book.pdf --out work/08_bookfigs）"
+    body = (tpl.replace("{book_title}", book.get("title_zh", ""))
+               .replace("{author}", book.get("author", ""))
+               .replace("{n_chapters}", str(len(chapters)))
+               .replace("{digest_summary}", digest_summary(chapters))
+               .replace("{figures}", fig_text))
+    print("=" * 78)
+    print("  Stage 5a 論證設計提示詞（讀完寫 work/05a_thesis.json）")
+    print("=" * 78)
+    print(body)
+    return 0
+
+
+def _short(text: str, n: int) -> str:
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    return text if visual_len(text) <= n else _truncate(text, n)
+
+
+def digest_summary(chapters: list[dict]) -> str:
+    """全書濃縮索引：每章一段，每一筆素材都帶編號，thesis.json 只能引用這些編號。"""
+    lines: list[str] = []
+    for c in chapters:
+        d, e = c["digest"], c["evidence"]
+        pages = c.get("pages")
+        pg = f"（p.{pages[0]}–{pages[1]}）" if isinstance(pages, (list, tuple)) and len(pages) == 2 else ""
+        lines.append(f"### {c['ch_id']}  {c['title']}{pg}")
+        lines.append(f"主張：{d.get('thesis', '')}")
+        lines.append(f"一句話：{d.get('one_line', '')}")
+        for i, kp in enumerate(d.get("key_points") or []):
+            lines.append(f"論點 kp{i}　{kp.get('point', '')}｜證據：{_short(kp.get('book_evidence', ''), 70)}"
+                         f"（{kp.get('page_ref', '')}）")
+        for i, dp in enumerate(d.get("data_points") or []):
+            lines.append(f"數據 data{i}　{_short(dp.get('claim', ''), 40)}＝{_short(str(dp.get('value', '')), 30)}"
+                         f"（{dp.get('as_of', '')}，{dp.get('page_ref', '')}）")
+        for i, q in enumerate(d.get("quotes") or []):
+            lines.append(f"引句 quote{i}　「{_short(q.get('text', ''), 60)}」（{q.get('page_ref', '')}）")
+        lines.append(f"反方：{d.get('counterpoint', '')}")
+        ext: list[str] = []
+        for i, t in enumerate(e.get("taiwan_lens") or []):
+            ext.append(f"taiwan{i}　{_short(t.get('angle', ''), 30)}：{_short(t.get('supporting_data', ''), 50)}")
+        for i, v in enumerate(e.get("verified") or []):
+            st = v.get("status", "")
+            if st in ("outdated", "contested"):
+                ext.append(f"verified{i}［{st}］　{_short(v.get('book_claim', ''), 30)} → "
+                           f"{_short(v.get('current_fact', ''), 50)}（{v.get('as_of', '')}）")
+        for i, x in enumerate(e.get("extensions") or []):
+            ext.append(f"extension{i}　{_short(x.get('title', ''), 40)}")
+        for i, x in enumerate(e.get("chart_candidates") or []):
+            ext.append(f"chart{i}　{_short(x.get('title', ''), 40)}（{len(x.get('data') or [])} 點，{x.get('unit', '')}）")
+        for i, x in enumerate(e.get("figure_candidates") or []):
+            ext.append(f"figure_candidate{i}　{_short(x.get('title', ''), 40)}（機構原圖，抓回本機後用 figure 路徑引用）")
+        if ext:
+            lines.append("外部　" + "\n　　　".join(ext))
+        lines.append("")
+    return "\n".join(lines)
+
+
+# ==========================================================================
+# thesis.json 驗證
+# ==========================================================================
+def run_validate_thesis(chapters: list[dict]) -> int:
+    step("驗證 work/05a_thesis.json")
+    if not THESIS_JSON.exists():
+        die(f"找不到 {THESIS_JSON}，先跑 --thesis-prompt")
+    try:
+        thesis = read_json(THESIS_JSON)
+    except Exception as ex:  # noqa: BLE001
+        die(f"thesis.json 不是合法 JSON：{ex}")
+    errs = validate_thesis(thesis, chapters)
+    if errs:
+        for e in errs:
+            fail(e)
+        print()
+        info(f"{len(errs)} 項不合格，修好再跑一次 --validate-thesis")
+        return 1
+    acts = thesis["acts"]
+    ok(f"通過：{len(acts)} 幕，{sum(len(a['evidence']) for a in acts)} 筆證據，"
+       f"{len(thesis['counter']['points'])} 條反方，附錄 {len(thesis.get('appendix_ch_ids') or [])} 章")
+    for a in acts:
+        info(f"  {a['id']}  {a['claim']}　← {'、'.join(a['ch_ids'])}")
+    info("下一步：python scripts/05_outline.py")
+    return 0
+
+
+def _len_check(obj: dict, key: str, cap: int, where: str, errs: list[str]) -> None:
+    v = obj.get(key)
+    if not isinstance(v, str) or not v.strip():
+        errs.append(f"{where}.{key}: 必須是非空字串")
+        return
+    n = visual_len(v.strip())
+    if n > cap:
+        errs.append(f"{where}.{key}: {n:.0f} 字 > {cap}：「{v.strip()[:30]}」")
+
+
+def validate_thesis(thesis: dict, chapters: list[dict]) -> list[str]:
+    errs: list[str] = []
+    if not isinstance(thesis, dict):
+        return ["thesis.json 最外層必須是物件"]
+    cm = chapter_map(chapters)
+    check_keys(thesis, ["book_claim", "book_claim_short", "why_now", "implication",
+                        "acts", "counter", "closing"], "thesis", errs)
+    if errs:
+        return errs
+
+    _len_check(thesis, "book_claim", 40, "thesis", errs)
+    _len_check(thesis, "book_claim_short", 14, "thesis", errs)
+    _len_check(thesis, "why_now", 21, "thesis", errs)
+    _len_check(thesis, "implication", 40, "thesis", errs)
+    _len_check(thesis, "closing", 14, "thesis", errs)
+    why = looks_like_topic(thesis.get("book_claim_short", ""))
+    if why:
+        errs.append(f"thesis.book_claim_short 不是主張句（{why}）")
+
+    acts = thesis.get("acts")
+    if not isinstance(acts, list) or not (3 <= len(acts) <= 5):
+        errs.append(f"acts 必須是 3–5 幕（目前 {len(acts) if isinstance(acts, list) else '非陣列'}）")
+        acts = acts if isinstance(acts, list) else []
+
+    used_ch: set[str] = set()
+    seen_ids: set[str] = set()
+    for i, a in enumerate(acts):
+        w = f"acts[{i}]"
+        check_keys(a, ["id", "claim", "question", "support", "evidence", "implication", "ch_ids"],
+                   w, errs)
+        if not isinstance(a, dict):
+            continue
+        aid = str(a.get("id", ""))
+        if not aid or aid in seen_ids:
+            errs.append(f"{w}.id 必須唯一且非空")
+        seen_ids.add(aid)
+        _len_check(a, "claim", 14, w, errs)
+        _len_check(a, "question", 21, w, errs)
+        _len_check(a, "implication", 40, w, errs)
+        why = looks_like_topic(a.get("claim", ""))
+        if why:
+            errs.append(f"{w}.claim 不是主張句（{why}）：「{a.get('claim', '')}」")
+
+        sup = a.get("support")
+        if not isinstance(sup, list) or not (2 <= len(sup) <= 4):
+            errs.append(f"{w}.support 必須是 2–4 步論證鏈")
+        else:
+            for j, s in enumerate(sup):
+                if not isinstance(s, str) or not s.strip():
+                    errs.append(f"{w}.support[{j}] 必須是非空字串")
+                elif visual_len(s) > 40:
+                    errs.append(f"{w}.support[{j}] {visual_len(s):.0f} 字 > 40")
+
+        ch_ids = a.get("ch_ids")
+        if not isinstance(ch_ids, list) or not ch_ids:
+            errs.append(f"{w}.ch_ids 必須至少列一章")
+            ch_ids = []
+        for cid in ch_ids:
+            if cid not in cm:
+                errs.append(f"{w}.ch_ids 含不存在的章 {cid}")
+        used_ch.update(c for c in ch_ids if c in cm)
+
+        ev = a.get("evidence")
+        if not isinstance(ev, list) or not (2 <= len(ev) <= 8):
+            errs.append(f"{w}.evidence 必須是 2–8 筆")
+            ev = ev if isinstance(ev, list) else []
+        for j, r in enumerate(ev):
+            _validate_ref(r, f"{w}.evidence[{j}]", cm, ch_ids, errs)
+
+    counter = thesis.get("counter")
+    if not isinstance(counter, dict):
+        errs.append("counter 必須是物件 {claim, points}")
+    else:
+        _len_check(counter, "claim", 14, "counter", errs)
+        pts = counter.get("points")
+        if not isinstance(pts, list) or not (2 <= len(pts) <= 4):
+            errs.append("counter.points 必須是 2–4 條")
+        else:
+            for j, p in enumerate(pts):
+                w = f"counter.points[{j}]"
+                if not isinstance(p, dict):
+                    errs.append(f"{w} 必須是物件")
+                    continue
+                _len_check(p, "label", 5, w, errs)
+                _len_check(p, "text", 40, w, errs)
+                if p.get("ch_id") not in cm:
+                    errs.append(f"{w}.ch_id 不存在：{p.get('ch_id')}")
+
+    appendix = thesis.get("appendix_ch_ids") or []
+    if not isinstance(appendix, list):
+        errs.append("appendix_ch_ids 必須是陣列（可為空）")
+        appendix = []
+    for cid in appendix:
+        if cid not in cm:
+            errs.append(f"appendix_ch_ids 含不存在的章 {cid}")
+        elif cid in used_ch:
+            errs.append(f"{cid} 已經進主線，不要同時放附錄")
+    missing = [c["ch_id"] for c in chapters if c["ch_id"] not in used_ch and c["ch_id"] not in appendix]
+    if missing:
+        errs.append("這些章沒被任何一幕用到、也不在 appendix_ch_ids："
+                    + "、".join(missing) + "（每一章都要有去處，不能無聲消失）")
+    return errs
+
+
+def _validate_ref(r: dict, w: str, cm: dict, act_ch_ids: list[str], errs: list[str]) -> None:
+    if not isinstance(r, dict):
+        errs.append(f"{w} 必須是物件")
+        return
+    keys = [k for k in EVIDENCE_REF_KEYS if k in r]
+    if len(keys) != 1:
+        errs.append(f"{w} 必須恰好有一個引用鍵（{'/'.join(EVIDENCE_REF_KEYS)}），目前：{keys or '無'}")
+        return
+    if not (r.get("use") or "").strip():
+        errs.append(f"{w}.use 必填：這筆證據撐住論證鏈的哪一步")
+    vis = r.get("visual")
+    if vis is not None and vis not in VISUALS:
+        errs.append(f"{w}.visual 只能是 {'/'.join(VISUALS)}，目前：{vis}")
+    cid = r.get("ch_id")
+    if cid not in cm:
+        errs.append(f"{w}.ch_id 不存在：{cid}")
+        return
+    if cid not in act_ch_ids:
+        errs.append(f"{w} 引用了 {cid}，但這一幕的 ch_ids 沒列它")
+    key = keys[0]
+    val = r[key]
+    d, e = cm[cid]["digest"], cm[cid]["evidence"]
+    if key == "figure":
+        p = Path(str(val))
+        if not (ROOT / p).exists() and not p.exists():
+            errs.append(f"{w}.figure 找不到檔案：{val}")
+        return
+    pools = {
+        "kp": d.get("key_points"), "quote": d.get("quotes"), "data": d.get("data_points"),
+        "taiwan": e.get("taiwan_lens"), "verified": e.get("verified"),
+        "chart": e.get("chart_candidates"), "extension": e.get("extensions"),
+    }
+    pool = pools.get(key) or []
+    if not isinstance(val, int) or not (0 <= val < len(pool)):
+        errs.append(f"{w}.{key}={val!r} 超出範圍（{cid} 只有 {len(pool)} 筆 {key}）——只能引用索引裡出現的編號")
+
+
+# ==========================================================================
+# 5b：藍圖
+# ==========================================================================
+def build_slides(thesis: dict, chapters: list[dict], cfg: dict) -> list[dict]:
     slides: list[dict] = []
     sid = [0]
     L_MAIN, L_VARIANT2, L_VARIANT3 = family_layouts()
+    cm = chapter_map(chapters)
+    book = cfg["book"]
+    pres = cfg["presenter"]
+    book_label = f"《{book.get('title_zh', '')}》"
+    author = book.get("author", "")
 
     def S(**kw) -> dict:
         sid[0] += 1
@@ -180,6 +435,9 @@ def build_slides(chapters: list[dict], groups: list[dict], cfg: dict) -> list[di
             "id": f"s{sid[0]:03d}",
             "layout": L_MAIN,
             "kind": "content",
+            "role": "evidence",
+            "act": None,
+            "style": None,
             "title": "",
             "subtitle": None,
             "body": [],
@@ -187,294 +445,335 @@ def build_slides(chapters: list[dict], groups: list[dict], cfg: dict) -> list[di
             "video": None,
             "sources": [],
             "narration": "",
-            "duration_sec": 70,
+            "duration_sec": 60,
             "ch_id": None,
-            # 頁數超出預算時的裁切優先序：數字越大越先被拿掉；0 = 不可裁
-            "_trim": 0,
         }
         base.update(kw)
         slides.append(base)
         return base
 
-    book = cfg["book"]
-    pres = cfg["presenter"]
-    book_label = f"《{book.get('title_zh', '')}》"
-    pages_per_ch = cfg["deck"].get("pages_per_chapter", [3, 5])
-
-    # 現場要播的影片：有指定 after_ch 的掛在該章之後，其餘統一放在全書綜合之前
+    # 影片：指定 after_ch 的掛在用到那一章的那一幕之後，其餘放在反方之前
     all_vids = videos()
-    ch_ids = {c["ch_id"] for c in chapters}
-    vids_by_ch: dict[str, list[dict]] = {}
+    act_of_ch: dict[str, str] = {}
+    for a in thesis["acts"]:
+        for cid in a["ch_ids"]:
+            act_of_ch.setdefault(cid, a["id"])
+    vids_by_act: dict[str, list[dict]] = {}
     loose_vids: list[dict] = []
     for v in all_vids:
-        if v["after_ch"] in ch_ids:
-            vids_by_ch.setdefault(v["after_ch"], []).append(v)
+        aid = act_of_ch.get(v["after_ch"] or "")
+        if aid:
+            vids_by_act.setdefault(aid, []).append(v)
         else:
             if v["after_ch"]:
-                warn(f"影片「{v['title']}」指定的 after_ch={v['after_ch']} 不存在，"
-                     "改放在全書綜合之前")
+                warn(f"影片「{v['title']}」的 after_ch={v['after_ch']} 不在任何一幕，改放在反方之前")
             loose_vids.append(v)
 
-    # ---- 1. 封面 ----
-    S(layout=L_COVER, kind="cover",
+    # ---- 序幕 ----
+    S(layout=L_COVER, kind="cover", role="cover",
       title=book.get("title_zh", ""),
-      subtitle=book.get("title_en") or None,
-      body=[{"level": 0, "text": f"{pres.get('dept','')}　{pres.get('name','')}"},
+      subtitle=thesis["book_claim_short"],
+      body=[{"level": 0, "text": f"{pres.get('dept', '')}　{pres.get('name', '')}"},
             {"level": 0, "text": pres.get("date", "")}],
-      duration_sec=30)
+      duration_sec=20)
 
-    # ---- 2. 全書地圖 / Agenda ----
-    toc_items = [{"level": 0, "text": g["name"]} for g in groups]
-    # 目錄超過 8 條就拆兩頁
-    for i in range(0, max(1, len(toc_items)), 8):
-        chunk = toc_items[i:i + 8]
-        S(layout=L_TOC, kind="toc",
-          title="今天的地圖" if i == 0 else "今天的地圖（續）",
-          body=chunk, sources=[{"label": book_label}], duration_sec=45)
+    S(layout=L_MAIN, kind="content", role="summary", style="labeled",
+      title=thesis["book_claim_short"],
+      subtitle=thesis["why_now"],
+      body=[{"label": "主張", "text": thesis["book_claim"]},
+            {"label": "證據", "text": f"{TODO}全書最有力的一筆證據，帶數字"},
+            {"label": "意義", "text": thesis["implication"]}],
+      sources=[{"label": f"{book_label}{author}"}], duration_sec=60)
 
-    # ---- 3. 為什麼讀這本書 ----
-    S(layout=L_MAIN, kind="content",
-      title="為什麼是這本書",
-      subtitle="它解決了我們手上哪個具體問題",
-      body=[{"level": 0, "text": "【待填】這本書處理的問題"},
-            {"level": 0, "text": "【待填】我們現在遇到的狀況"},
-            {"level": 0, "text": "【待填】讀完可以帶走什麼"}],
-      sources=[{"label": f"{book_label}{book.get('author','')}／{book.get('publisher_year','')}"}],
-      duration_sec=90)
+    S(layout=L_TOC, kind="toc", role="map",
+      title=f"{len(thesis['acts'])} 個主張",
+      body=[{"level": 0, "text": a["claim"]} for a in thesis["acts"]]
+           + [{"level": 0, "text": f"反方：{thesis['counter']['claim']}"}],
+      sources=[{"label": book_label}], duration_sec=30)
 
-    # ---- 4. 每章 ----
-    for g in groups:
-        # 4a. 章節頁籤（每群組一張）
-        S(layout=L_DIVIDER, kind="divider", title=g["name"],
-          ch_id=g["ch_ids"][0], duration_sec=25)
+    # ---- 每一幕 ----
+    used_refs: set[tuple] = set()
+    for a in thesis["acts"]:
+        aid = a["id"]
+        first_ch = a["ch_ids"][0]
+        S(layout=L_DIVIDER, kind="divider", role="divider", act=aid, ch_id=first_ch,
+          title=a["claim"], duration_sec=15)
 
-        for ch in g["chapters"]:
-            # S() 本身已把頁面 append 進 slides，這裡不要再 extend 一次
-            _chapter_slides(ch, S, book_label, pages_per_ch, L_MAIN, L_VARIANT2)
-            # 這一章之後要播的影片
-            for v in vids_by_ch.get(ch["ch_id"], []):
-                _video_slide(S, v)
+        refs = [cm[c].get("digest", {}) for c in a["ch_ids"] if c in cm]
+        page_refs = [_page_ref(d) for d in refs]
+        page_refs = [p for p in page_refs if p][:3]
+        S(layout=L_MAIN, kind="content", role="claim", act=aid, ch_id=first_ch, style="chain",
+          title=a["claim"], subtitle=a["question"],
+          body=[{"text": s} for s in a["support"]],
+          sources=[{"label": f"{book_label} {'、'.join(page_refs)}".strip()}],
+          duration_sec=60)
 
-    # ---- 4b. 沒指定章節的影片 ----
+        for r in a["evidence"]:
+            _evidence_slide(r, a, cm, S, book_label, author, L_MAIN, L_VARIANT2)
+            key = next(k for k in EVIDENCE_REF_KEYS if k in r)
+            used_refs.add((r["ch_id"], key, str(r[key])))
+
+        S(layout=L_VARIANT2, kind="content", role="implication", act=aid, ch_id=first_ch,
+          style="labeled",
+          title=f"{TODO}結論句",
+          subtitle="對長期投資的意義",
+          body=[{"label": "書說", "text": _clip(a["claim"], 40)},
+                {"label": "今天", "text": f"{TODO}最新資料怎麼說（04_evidence）"},
+                {"label": "長期投資", "text": a["implication"]}],
+          sources=[{"label": f"{book_label} {page_refs[0] if page_refs else ''}".strip()}],
+          duration_sec=50)
+
+        for v in vids_by_act.get(aid, []):
+            _video_slide(S, v, aid)
+
     for v in loose_vids:
-        _video_slide(S, v)
+        _video_slide(S, v, None)
 
-    # ---- 5. 全書綜合 ----
-    S(layout=L_VARIANT3, kind="content",
-      title="把八章接起來看",
-      subtitle="全書真正在講的一件事",
-      body=[{"level": 0, "text": "【待填】貫穿全書的主線"},
-            {"level": 0, "text": "【待填】各章之間的因果關係"},
-            {"level": 0, "text": "【待填】最反直覺的一點"}],
-      sources=[{"label": book_label}], duration_sec=100)
-    S(layout=L_VARIANT3, kind="content", _trim=3,
-      title="這本書沒回答的問題",
-      subtitle="留白的地方才是我們要想的",
-      body=[{"level": 0, "text": "【待填】書的適用邊界"},
-            {"level": 0, "text": "【待填】台灣市場的差異"}],
-      sources=[{"label": book_label}], duration_sec=80)
+    # ---- 反方 ----
+    counter = thesis["counter"]
+    S(layout=L_DIVIDER, kind="divider", role="counter", title=counter["claim"], duration_sec=15)
+    pts = counter["points"]
+    per_page = 2 if len(pts) == 4 else 3          # 4 條拆 2+2，不要 3+1
+    for i in range(0, len(pts), per_page):
+        chunk = pts[i:i + per_page]
+        S(layout=L_VARIANT3, kind="content", role="counter", style="labeled",
+          title=counter["claim"] if i == 0 else f"{counter['claim']}（續）",
+          subtitle=f"{TODO}這些弱點加起來代表什麼",
+          body=[{"label": p["label"], "text": p["text"]} for p in chunk],
+          sources=[{"label": f"{book_label} " + "、".join(
+              sorted({_page_ref(cm[p['ch_id']]['digest']) for p in chunk if _page_ref(cm[p['ch_id']]['digest'])}))}],
+          duration_sec=60)
 
-    # ---- 6. 可落地的行動 ----
-    S(layout=L_VARIANT3, kind="content",
-      title="明天就能做的三件事",
-      subtitle="不是原則，是動作",
-      body=[{"level": 0, "text": "【待填】動作一（誰、做什麼、多久一次）"},
-            {"level": 0, "text": "【待填】動作二"},
-            {"level": 0, "text": "【待填】動作三"}],
-      sources=[{"label": book_label}], duration_sec=100)
+    # ---- 結語 ----
+    S(layout=L_CLOSING, kind="closing", role="closing", title=thesis["closing"], duration_sec=30)
 
-    # ---- 7. 我的異議 ----
-    counters = [c["digest"].get("counterpoint", "") for c in chapters
-                if c["digest"].get("counterpoint")]
-    S(layout=L_VARIANT2, kind="content",
-      title="我不同意的地方",
-      subtitle="全書最站不住腳的三個論點",
-      body=_fit_bullets([_truncate(cp, 30) for cp in counters]) or
-           [{"level": 0, "text": "【待填】異議"}],
-      sources=[{"label": book_label}], duration_sec=110)
+    # ---- 附錄：未進主線的章（沒用到的過期數據只提醒，不自動做表：cell 會是長句）----
+    appendix = [c for c in thesis.get("appendix_ch_ids") or [] if c in cm]
+    if appendix:
+        S(layout=L_DIVIDER, kind="divider", role="appendix", title="附錄：備用頁", duration_sec=0)
+    for cid in appendix:
+        c = cm[cid]
+        d = c["digest"]
+        kp0 = (d.get("key_points") or [{}])[0]
+        dps = d.get("data_points") or []
+        body = [{"label": "主張", "text": _clip(d.get("thesis", ""), 40)},
+                {"label": "證據", "text": _clip(kp0.get("book_evidence", ""), 40)}]
+        if dps:
+            body.append({"label": "數字", "text": _clip(
+                f"{dps[0].get('claim', '')}：{dps[0].get('value', '')}", 40)})
+        S(layout=L_VARIANT3, kind="content", role="appendix", ch_id=cid, style="labeled",
+          title=_clip(d.get("one_line", "") or c["title"], 14),
+          subtitle=_clip(c["title"], 21),
+          body=body,
+          sources=[{"label": f"{book_label} {_page_ref(d)}".strip()}],
+          duration_sec=0)
 
-    # ---- 8. 結語 / Q&A ----
-    S(layout=L_CLOSING, kind="closing", title="Q & A", duration_sec=30)
+    unused_outdated = sum(
+        1 for c in chapters for i, v in enumerate(c["evidence"].get("verified") or [])
+        if v.get("status") == "outdated" and (c["ch_id"], "verified", str(i)) not in used_refs)
+    if unused_outdated:
+        info(f"另有 {unused_outdated} 筆過期數據（04_evidence verified[status=outdated]）沒進主線；"
+             "要用就在 thesis.json 引用，或潤飾時自己做成對照表放附錄")
 
     return slides
 
 
-def _chapter_slides(ch: dict, S, book_label: str, pages_per_ch: list[int],
-                    L_MAIN: int, L_VARIANT2: int) -> list[dict]:
-    """單一章節的內頁：核心主張 1 + 論點展開 1–2 + 台灣對照／圖表 1（+ 過期數據 1）。
+# --------------------------------------------------------------------------
+def _evidence_slide(r: dict, act: dict, cm: dict, S, book_label: str, author: str,
+                    L_MAIN: int, L_VARIANT2: int) -> dict:
+    """一筆 evidence 引用 → 一頁骨架。素材全部從 digest / evidence 原文帶進來，
+    文字上的【待填】留給 Claude 潤飾（絕不在這裡生內容）。"""
+    aid, cid = act["id"], r["ch_id"]
+    key = next(k for k in EVIDENCE_REF_KEYS if k in r)
+    val = r[key]
+    vis = r.get("visual")
+    c = cm[cid]
+    d, e = c["digest"], c["evidence"]
+    use = (r.get("use") or "").strip()
+    base = dict(role="evidence", act=aid, ch_id=cid, duration_sec=45)
 
-    S() 會直接把頁面寫進外層 slides；回傳值只給本函式內部判斷「這章已經幾頁了」，
-    呼叫端不要再 extend 一次（會變兩倍頁數）。
-    """
-    d, e = ch["digest"], ch["evidence"]
-    ch_id = ch["ch_id"]
-    kps = d.get("key_points", [])
-    min_p, max_p = (pages_per_ch + [3, 5])[:2]
+    if key == "figure":
+        return S(layout=L_BLANK, kind="chart", **base,
+                 title=f"{TODO}圖的結論",
+                 subtitle=f"{TODO}圖名＋時間範圍＋單位",
+                 image={"path": str(val)}, body=[],
+                 sources=[_fig_source(str(val), book_label)])
 
-    made = []
+    if key == "quote":
+        q = d["quotes"][val]
+        text = (q.get("text") or "").strip()
+        is_en = sum(ch.isascii() for ch in text) > len(text) * 0.6
+        return S(layout=L_BLANK, kind="chart", **{**base, "duration_sec": 20},
+                 title="", subtitle=None,
+                 quote={"text": text, "zh": f"{TODO}中譯" if is_en else "",
+                        "attrib": f"{author}（{book_label}{q.get('page_ref', '')}）"},
+                 sources=[{"label": f"{book_label}{q.get('page_ref', '')}"}])
 
-    # --- 核心主張頁 ---
-    body = [{"level": 0, "text": _truncate(d.get("one_line", ""), 40)}]
-    # §7.3：每頁至少一個「具體物」。優先塞一筆書中數據，沒有才用引句。
-    dps = d.get("data_points") or []
-    if dps:
-        dp0 = dps[0]
-        body.append({"level": 0, "text": _truncate(
-            f"{dp0.get('claim','')}：{dp0.get('value','')}"
-            + (f"（{dp0.get('as_of','')}）" if dp0.get("as_of") else ""), 40)})
-    for q in d.get("quotes", [])[:1]:
-        body.append({"level": 1, "text": _truncate(q.get("text", ""), 60)})
-    src = [{"label": f"{book_label} {_page_ref(d)}"}]
-    made.append(S(layout=L_MAIN, kind="content", ch_id=ch_id,
-                  title=_truncate(d.get("thesis", ""), 18),
-                  subtitle=_truncate(d.get("one_line", ""), 28),
-                  body=body, sources=src, duration_sec=80))
+    if key == "data":
+        dp = d["data_points"][val]
+        value = str(dp.get("value", "")).strip()
+        short = visual_len(value) <= 10
+        if vis in (None, "stat"):
+            return S(layout=L_BLANK, kind="chart", **{**base, "duration_sec": 20},
+                     title="", subtitle=None,
+                     stat={"value": value if short else f"{TODO}數字",
+                           "label": _clip(dp.get("claim", ""), 30),
+                           "note": (f"{dp.get('as_of', '')}" if short else f"{value}（{dp.get('as_of', '')}）")},
+                     sources=[{"label": f"{book_label}{dp.get('page_ref', '')}"}])
+        return S(layout=L_MAIN, kind="content", style="labeled", **base,
+                 title=f"{TODO}結論句", subtitle=_clip(dp.get("claim", ""), 21),
+                 body=[{"label": "書中", "text": _clip(f"{dp.get('claim', '')}：{value}", 40)},
+                       {"label": "時點", "text": _clip(str(dp.get("as_of", "")), 40)},
+                       {"label": "今天", "text": f"{TODO}最新值（04_evidence verified）"}],
+                 sources=[{"label": f"{book_label}{dp.get('page_ref', '')}"}])
 
-    # --- 論點展開頁（依版面容量打包，最多 2 頁）---
-    # 要點縮到 30 字（40 是上限不是目標），且只有第一條掛第二層書證——
-    # prompts/outline.md 明訂「不要每條都掛一個第二層」，每條都掛必爆 8 行上限。
-    blocks = []
-    for j, kp in enumerate(kps):
-        blk = [{"level": 0, "text": _truncate(kp.get("point", ""), 30)}]
-        ev = kp.get("book_evidence", "")
-        if ev and j == 0:
-            blk.append({"level": 1, "text": _truncate(ev, 30)})
-        blocks.append((kp, blk))
+    if key == "kp":
+        kp = d["key_points"][val]
+        src = [{"label": f"{book_label}{kp.get('page_ref', '')}"}]
+        cap = [{"text": _clip(use, 40)}]
+        if vis == "flow":
+            return S(layout=L_BLANK, kind="chart", **base, title=f"{TODO}結論句",
+                     subtitle=_clip(kp.get("point", ""), 30), body=cap, sources=src,
+                     flow={"type": "chain", "per_row": 3,
+                           "nodes": [{"label": f"{TODO}步驟 {i + 1}", "note": ""} for i in range(3)]})
+        if vis == "timeline":
+            return S(layout=L_BLANK, kind="chart", **base, title=f"{TODO}結論句",
+                     subtitle=_clip(kp.get("point", ""), 30), body=[], sources=src,
+                     timeline={"events": [{"when": TODO, "what": TODO, "note": ""} for _ in range(3)]})
+        if vis == "table":
+            return S(layout=L_MAIN, kind="chart", **base, title=f"{TODO}結論句",
+                     subtitle=_clip(kp.get("point", ""), 21), body=[], sources=src,
+                     table={"columns": [f"{TODO}欄一", f"{TODO}欄二"], "widths": [4, 6],
+                            "rows": [[_clip(kp.get("book_evidence", ""), 40), TODO]]})
+        if vis == "split":
+            return S(layout=L_MAIN, kind="chart", **base, title=f"{TODO}結論句",
+                     subtitle=_clip(kp.get("point", ""), 21), body=cap, sources=src,
+                     split={"left": {"title": f"{TODO}左欄", "items": [_clip(kp.get("book_evidence", ""), 30)]},
+                            "right": {"title": f"{TODO}右欄", "accent": True, "items": [TODO]}})
+        if vis == "chain":
+            return S(layout=L_MAIN, kind="content", style="chain", **base,
+                     title=f"{TODO}結論句", subtitle=_clip(kp.get("point", ""), 21),
+                     body=[{"text": f"{TODO}第一步"}, {"text": f"{TODO}第二步"},
+                           {"text": _clip(kp.get("book_evidence", ""), 40)}],
+                     sources=src)
+        if vis == "prose":
+            return S(layout=L_MAIN, kind="content", style="prose", **base,
+                     title=f"{TODO}結論句", subtitle=_clip(kp.get("point", ""), 21),
+                     body=[{"text": _clip(kp.get("elaboration", ""), 90)},
+                           {"text": _clip(kp.get("book_evidence", ""), 90)}],
+                     sources=src)
+        return S(layout=L_MAIN, kind="content", style="labeled", **base,
+                 title=f"{TODO}結論句", subtitle=_clip(kp.get("point", ""), 21),
+                 body=[{"label": "機制", "text": f"{TODO}一句講清楚機制"},
+                       {"label": "書中", "text": _clip(kp.get("book_evidence", ""), 40)},
+                       {"label": "今天", "text": f"{TODO}最新數字或台灣對照（04_evidence）"}],
+                 sources=src)
 
-    chunks = _pack_blocks(blocks, max_pages=2) or [[]]
-    for i, chunk in enumerate(chunks):
-        body = [ln for _, blk in chunk for ln in blk]
-        refs = [kp.get("page_ref", "") for kp, _ in chunk if kp.get("page_ref")]
-        made.append(S(layout=L_MAIN, kind="content", ch_id=ch_id, _trim=(1 if i else 0),
-                      title="【待填】這一頁的結論句",
-                      subtitle="【待填】為什麼／所以呢",
-                      body=body or [{"level": 0, "text": "【待填】"}],
-                      sources=[{"label": f"{book_label} {refs[0] if refs else _page_ref(d)}"}],
-                      duration_sec=90))
+    if key == "taiwan":
+        t = e["taiwan_lens"][val]
+        if vis == "split":
+            return S(layout=L_VARIANT2, kind="chart", **base,
+                     title=f"{TODO}結論句", subtitle=_clip(t.get("angle", ""), 21),
+                     body=[{"text": _clip(use, 40)}],
+                     split={"left": {"title": "書中", "items": [f"{TODO}書怎麼說"]},
+                            "right": {"title": "台灣", "accent": True,
+                                      "items": [_clip(t.get("insight", ""), 40),
+                                                _clip(t.get("supporting_data", ""), 40)]}},
+                     sources=[_src(t)])
+        return S(layout=L_VARIANT2, kind="content", style="labeled", **base,
+                 title=f"{TODO}結論句", subtitle=_clip(t.get("angle", ""), 21),
+                 body=[{"label": "書說", "text": f"{TODO}書中對應的說法"},
+                       {"label": "台灣", "text": _clip(t.get("insight", ""), 40)},
+                       {"label": "數字", "text": _clip(t.get("supporting_data", ""), 40)}],
+                 sources=[_src(t)])
 
-    # --- 台灣對照／數據頁 ---
-    charts = e.get("chart_candidates", [])
-    tw = e.get("taiwan_lens", [])
-    if charts:
-        c = charts[0]
-        made.append(S(layout=L_BLANK, kind="chart", ch_id=ch_id,
-                      title=_truncate(c.get("title", ""), 18),
-                      subtitle=f"單位：{c.get('unit', '')}" if c.get("unit") else None,
-                      body=[],
-                      chart={"type": c.get("chart_type", "bar"),
-                             "title": c.get("title", ""),
-                             "unit": c.get("unit", ""),
-                             "data": c.get("data", [])},
-                      sources=[_src(c)], duration_sec=90))
-    elif tw:
-        t = tw[0]
-        body = [{"level": 0, "text": _truncate(t.get("insight", ""), 40)}]
-        if t.get("supporting_data"):
-            body.append({"level": 1, "text": _truncate(t["supporting_data"], 60)})
-        made.append(S(layout=L_VARIANT2, kind="content", ch_id=ch_id,
-                      title=_truncate(t.get("angle", ""), 18),
-                      subtitle="台灣市場的對照",
-                      body=body, sources=[_src(t)], duration_sec=90))
-    else:
-        made.append(S(layout=L_VARIANT2, kind="content", ch_id=ch_id,
-                      title="【待填】台灣市場對照",
-                      subtitle="【待填】這章的觀點在台灣會怎麼呈現",
-                      body=[{"level": 0, "text": "【待填】缺 evidence，請跑 04_research.py"}],
-                      sources=[], duration_sec=90))
+    if key == "verified":
+        v = e["verified"][val]
+        if vis in (None, "table"):
+            return S(layout=L_MAIN, kind="chart", **base,
+                     title=f"{TODO}結論句", subtitle=_clip(v.get("book_claim", ""), 21),
+                     body=[], sources=[_src(v), {"label": book_label}],
+                     table={"columns": ["書中", f"最新（{v.get('as_of', '')}）"], "widths": [5, 5],
+                            "rows": [[_clip(v.get("book_claim", ""), 40),
+                                      _clip(v.get("current_fact", ""), 48)]]})
+        return S(layout=L_MAIN, kind="content", style="labeled", **base,
+                 title=f"{TODO}結論句", subtitle=_clip(v.get("book_claim", ""), 21),
+                 body=[{"label": "書中", "text": _clip(v.get("book_claim", ""), 40)},
+                       {"label": "最新", "text": _clip(v.get("current_fact", ""), 40)},
+                       {"label": "意義", "text": _clip(use, 40)}],
+                 sources=[_src(v), {"label": book_label}])
 
-    # --- 過期數據頁（規劃書 §6：outdated 一定要放進投影片）---
-    outdated = [v for v in e.get("verified", []) if v.get("status") == "outdated"]
-    if outdated and len(made) < max_p:
-        v = outdated[0]
-        made.append(S(layout=L_VARIANT2, kind="content", ch_id=ch_id, _trim=2,
-                      title="書寫的數字已經變了",
-                      subtitle=_truncate(v.get("book_claim", ""), 28),
-                      body=[{"level": 0, "text": _truncate(f"書中：{v.get('book_claim','')}", 40)},
-                            {"level": 0, "text": _truncate(f"最新：{v.get('current_fact','')}", 40)}],
-                      sources=[_src(v)], duration_sec=80))
+    if key == "chart":
+        ch = e["chart_candidates"][val]
+        return S(layout=L_BLANK, kind="chart", **base,
+                 title=f"{TODO}圖的結論",
+                 subtitle=_clip(f"{ch.get('title', '')}（{ch.get('unit', '')}）", 30),
+                 chart={"type": ch.get("chart_type", "bar"), "title": ch.get("title", ""),
+                        "unit": ch.get("unit", ""), "data": ch.get("data", [])},
+                 body=[], sources=[_src(ch)])
 
-    return made
+    x = e["extensions"][val]                      # extension
+    return S(layout=L_VARIANT2, kind="content", style="labeled", **base,
+             title=f"{TODO}結論句", subtitle=_clip(x.get("title", ""), 21),
+             body=[{"label": "書沒講", "text": _clip(x.get("content", ""), 40)},
+                   {"label": "為什麼", "text": _clip(use, 40)},
+                   {"label": "數字", "text": f"{TODO}帶一個具體數字"}],
+             sources=[_src(x)])
 
 
-
-
-
-def _video_slide(S, v: dict) -> dict:
+def _video_slide(S, v: dict, act_id: str | None) -> dict:
     """分享會現場要播的影片頁：標題 + 起訖時間碼 + QR code（06_build_pptx 產圖）。
 
-    duration_sec 直接是播放長度，逐字稿只寫進場與收尾的過場詞，
-    所以 narration 的字數檢查對影片頁另有標準（見 08_qa.check_narration）。
+    duration_sec 直接是播放長度，逐字稿只寫進場與收尾的過場詞。
     """
     span = f"{format_timecode(v['start'])}–{format_timecode(v['end'])}"
     body = [{"level": 0, "text": f"播放片段 {span}（{format_timecode(v['duration_sec'])}）"}]
     if v["note"]:
-        body.append({"level": 1, "text": _truncate(v["note"], 60)})
-    return S(layout=L_BLANK, kind="video",
-             title=_truncate(v["title"], 18),
+        body.append({"level": 0, "text": _clip(v["note"], 60)})
+    return S(layout=L_BLANK, kind="video", role="video", act=act_id,
+             title=_clip(v["title"], 18),
              subtitle="現場播放",
              body=body,
              video={"url": v["url"], "start": v["start"], "end": v["end"],
                     "span": span, "note": v["note"]},
              sources=[{"label": "影片連結見頁面 QR code", "url": v["url"]}],
-             # 播放時間 + 前後過場約 20 秒
              duration_sec=max(30, v["duration_sec"] + 20),
              ch_id=v["after_ch"])
 
 
-def _fit_bullets(texts: list[str]) -> list[dict]:
-    """把一串第一層要點收斂到版面容量內（行數與總字數兩個上限都要守）。"""
-    lim = limits()
-    max_lines = int(lim.get("max_body_lines", 8))
-    max_chars = int(lim.get("body_max_chars_per_slide", 160))
-    hi = int((lim.get("bullets_l1_range") or [3, 5])[1])
-
-    out: list[dict] = []
-    for t in texts:
-        if not t:
-            continue
-        cand = out + [{"level": 0, "text": t}]
-        if len(cand) > hi:
-            break
-        if out and (estimate_lines(cand, 24) > max_lines
-                    or sum(visual_len(b["text"]) for b in cand) > max_chars):
-            break
-        out = cand
-    return out
-
-
-def _pack_blocks(blocks: list[tuple[dict, list[dict]]], max_pages: int = 2) -> list[list]:
-    """把 key_point 區塊裝進頁面，同時守住行數與總字數上限。
-
-    05_outline 要先守住版面容量，06_build_pptx 的 fit_body() 才是最後一道保險；
-    不這樣做的話 deck.json 永遠會被 08_qa 的「溢排」判 FAIL。
-    """
-    lim = limits()
-    max_lines = int(lim.get("max_body_lines", 8))
-    max_chars = int(lim.get("body_max_chars_per_slide", 160))
-
-    pages: list[list] = []
-    cur: list = []
-    for item in blocks:
-        cand = cur + [item]
-        body = [ln for _, blk in cand for ln in blk]
-        if cur and (estimate_lines(body, 24) > max_lines
-                    or sum(visual_len(b["text"]) for b in body) > max_chars):
-            pages.append(cur)
-            cur = [item]
-            if len(pages) >= max_pages:
-                break
-        else:
-            cur = cand
-    if cur and len(pages) < max_pages:
-        pages.append(cur)
-    return pages[:max_pages]
+# --------------------------------------------------------------------------
+def _fig_source(path: str, book_label: str) -> dict:
+    """圖檔的資料來源：書中原圖寫 PDF 頁碼；機構原圖從 09_srcfigs/manifest.json 取。"""
+    p = Path(path)
+    if "08_bookfigs" in path:
+        m = re.match(r"p(\d+)", p.stem)
+        return {"label": f"{book_label}書中圖表，PDF p.{int(m.group(1))}（請核對原書頁碼）" if m
+                else f"{book_label}書中圖表"}
+    man = WORK / "09_srcfigs" / "manifest.json"
+    if man.exists():
+        try:
+            data = read_json(man)
+        except Exception:  # noqa: BLE001
+            data = None
+        items = data.get("items") if isinstance(data, dict) else data
+        if isinstance(data, dict) and not isinstance(items, list):
+            items = list(data.values())
+        for it in items or []:
+            if not isinstance(it, dict):
+                continue
+            if str(it.get("path") or "").endswith(p.name):
+                out = _src({**it, "source_url": it.get("page_url") or it.get("figure_url")})
+                if out["label"].startswith("【待填"):
+                    out["label"] = f"{TODO}機構名（YYYY/MM）"
+                return out
+    return {"label": f"{TODO}機構名（YYYY/MM）"}
 
 
 def _src(obj: dict) -> dict:
     """外部來源 label 用「機構名（YYYY/MM）」，url 另存供 QA 檢查。"""
     title = (obj.get("source_title") or "").strip()
     as_of = (obj.get("as_of") or "").strip().replace("-", "/")
-    label = f"{title}（{as_of}）" if as_of else title
+    label = f"{title}（{as_of}）" if (title and as_of) else title
     out = {"label": label or "【待填來源】"}
     if obj.get("source_url"):
         out["url"] = obj["source_url"]
@@ -486,6 +785,14 @@ def _page_ref(d: dict) -> str:
         if kp.get("page_ref"):
             return kp["page_ref"]
     return ""
+
+
+def _clip(text: str, max_visual: int) -> str:
+    """骨架用：放得下就原文，放不下就標【待填】＋截斷——不讓截斷的句子悄悄過關。"""
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    if visual_len(text) <= max_visual:
+        return text
+    return TODO + _truncate(text, max_visual - 4)
 
 
 def _truncate(text: str, max_visual: int) -> str:
@@ -500,86 +807,85 @@ def _truncate(text: str, max_visual: int) -> str:
     return out.rstrip("，、。；：") + "…"
 
 
-def trim_to_budget(slides: list[dict]) -> list[dict]:
-    """頁數超出預算就依 _trim 優先序拿掉可選頁面。
+# --------------------------------------------------------------------------
+def assign_durations(slides: list[dict]) -> list[dict]:
+    """把講述頁的總時長配到目標區間（總長 − 5 分鐘 Q&A）。
 
-    短講（例如 30–45 分鐘）不該產出 60 頁再叫使用者自己刪。
-    優先序：3 =「這本書沒回答的問題」→ 2 = 過期數據頁 → 1 = 第二張論點展開頁。
-    _trim = 0 的頁面（封面、頁籤、核心主張、圖表、影片…）永不裁切。
-    """
-    lo, hi = target_slides()
-    before = len(slides)
-    for level in (3, 2, 1):
-        i = 0
-        while len(slides) > hi and i < len(slides):
-            if slides[i].get("_trim") == level and len(slides) - 1 >= lo:
-                slides.pop(i)
-            else:
-                i += 1
-    if len(slides) < before:
-        ok(f"依 {lo}–{hi} 頁的預算裁掉 {before - len(slides)} 頁可選內容")
-    return slides
-
-
-def assign_durations(slides: list[dict], cfg: dict) -> list[dict]:
-    """把總時長壓到目標區間（規劃書 §9：總長 55 分鐘，留 5 分鐘 Q&A）。
-
-    影片頁的秒數是實際播放長度，不參與縮放；其餘頁面分攤剩下的時間。
+    這只是配速，不裁頁：
+      - 節奏頁（頁籤／引言／大數字／影片）的秒數是設計值，不縮放
+      - 內容太多時把其餘頁面等比壓縮，但 scale 太小就警告使用者把次要證據頁移到附錄
+      - 內容比時段少時「不往上灌」：每頁最多放大到 1.3 倍且不超過 pacing.page_max_sec，
+        剩下的時間留給互動，比把每一頁都拖長好
+    附錄頁不計時。
     """
     lo, hi = talk_minutes_range()
     target_sec = int(((lo + hi) / 2) * 60)
+    pacing = load_project().get("pacing") or {}
+    page_max = int(pacing.get("page_max_sec", 120))
 
-    fixed = [s for s in slides if s["kind"] == "video"]
-    flex = [s for s in slides if s["kind"] != "video"]
+    talk = [s for s in slides if not is_appendix(s)]
+
+    def _fixed(s: dict) -> bool:
+        return s["kind"] in ("video", "divider") or bool(s.get("quote") or s.get("stat"))
+
+    fixed = [s for s in talk if _fixed(s)]
+    flex = [s for s in talk if not _fixed(s)]
     fixed_sec = sum(s["duration_sec"] for s in fixed)
-
-    budget = target_sec - fixed_sec
     cur = sum(s["duration_sec"] for s in flex)
     if cur <= 0 or not flex:
         return slides
-    if budget < cur * 0.35:
-        warn(f"影片佔掉 {fixed_sec // 60}:{fixed_sec % 60:02d}，"
-             f"剩給講述的時間不足。考慮減少影片或拉長 deck.minutes。")
-        budget = max(budget, int(cur * 0.35))
 
+    budget = target_sec - fixed_sec
+    if budget < cur * 0.35:
+        warn(f"影片與節奏頁佔掉 {format_timecode(fixed_sec)}，剩給講述的時間不足。"
+             "考慮減少影片或拉長 deck.minutes。")
+        budget = max(budget, int(cur * 0.35))
     scale = budget / cur
+    if scale < 0.6:
+        warn(f"內容量約為時段的 {1 / scale:.1f} 倍。時間是指引不是門檻：與其壓縮每一頁，"
+             "不如把次要的證據頁移到附錄（role=appendix），或拉長 deck.minutes。")
+    if scale > 1.3:
+        info(f"內容比時段少（可放大 {scale:.1f} 倍），只放大到 1.3 倍，其餘留給互動；"
+             "要填滿就多加證據頁，不要把每頁拖長。")
+        scale = 1.3
     for s in flex:
-        s["duration_sec"] = max(20, int(round(s["duration_sec"] * scale / 5) * 5))
+        s["duration_sec"] = min(page_max, max(20, int(round(s["duration_sec"] * scale / 5) * 5)))
     return slides
 
 
-def print_budget(slides: list[dict], cfg: dict) -> None:
-    lo, hi = target_slides()
-    total = len(slides)
-    by_kind: dict[str, int] = {}
+def print_summary(slides: list[dict]) -> None:
+    talk = [s for s in slides if not is_appendix(s)]
+    by_role: dict[str, int] = {}
     for s in slides:
-        by_kind[s["kind"]] = by_kind.get(s["kind"], 0) + 1
-
+        by_role[s.get("role", "?")] = by_role.get(s.get("role", "?"), 0) + 1
     print()
-    print("  頁數預算")
+    print("  頁面組成")
     print("  " + "─" * 52)
-    names = {"cover": "封面", "toc": "全書地圖 / Agenda", "divider": "章節頁籤",
-             "content": "內容頁", "chart": "圖表頁", "video": "影片頁",
-             "closing": "結語 / Q&A"}
-    for k, n in by_kind.items():
-        print(f"  {names.get(k, k):<22} {n:>3} 頁")
+    for role, n in by_role.items():
+        print(f"  {ROLE_LABELS.get(role, role):<22} {n:>3} 頁")
     print("  " + "─" * 52)
-    secs = sum(s["duration_sec"] for s in slides)
-    print(f"  {'合計':<22} {total:>3} 頁   預估 {secs // 60}:{secs % 60:02d}")
+    secs = sum(s["duration_sec"] for s in talk)
+    n_app = len(slides) - len(talk)
+    print(f"  {'講述頁合計':<22} {len(talk):>3} 頁   預估 {format_timecode(secs)}"
+          + (f"　（另有附錄 {n_app} 頁不計時）" if n_app else ""))
+
+    vis_keys = ("image", "flow", "timeline", "table", "split", "quote", "stat", "chart")
+    n_vis = sum(1 for s in talk if any(s.get(k) for k in vis_keys))
+    print(f"  {'視覺頁':<22} {n_vis:>3} 頁   佔講述頁 {n_vis / max(1, len(talk)):.0%}")
     print()
 
-    if total < lo:
-        warn(f"只有 {total} 頁，低於目標 {lo}–{hi} 頁。"
-             "考慮在 config/project.yaml 調高 pages_per_chapter，或章節拆得太粗。")
-    elif total > hi:
-        warn(f"共 {total} 頁，高於目標 {lo}–{hi} 頁。"
-             "考慮調低 pages_per_chapter，或讓 05_outline.py 合併更多章節。")
-    else:
-        ok(f"{total} 頁，落在目標 {lo}–{hi} 頁區間內")
+    lo, hi = target_slides()
+    if not (lo <= len(talk) <= hi):
+        info(f"講述頁 {len(talk)} 頁，參考區間 {lo}–{hi}（只是參考，不裁頁；逐字稿寫完看總時長）")
 
-    todo = sum(1 for s in slides if "【待填】" in str(s.get("title", "")) + str(s.get("body", "")))
+    todo = sum(1 for s in slides if TODO in _blob(s))
     if todo:
-        info(f"{todo} 頁含【待填】標記，需要 Claude Code 依 prompts/outline.md 潤飾")
+        info(f"{todo} 頁含{TODO}標記，Claude 依 prompts/outline.md 潤飾；08_qa 對殘留的{TODO}判 FAIL")
+
+
+def _blob(s: dict) -> str:
+    import json
+    return json.dumps({k: v for k, v in s.items() if k != "narration"}, ensure_ascii=False)
 
 
 if __name__ == "__main__":

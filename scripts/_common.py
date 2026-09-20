@@ -26,6 +26,7 @@ RAW = WORK / "01_raw"
 CHAPTERS = WORK / "02_chapters"
 DIGEST = WORK / "03_digest"
 EVIDENCE = WORK / "04_evidence"
+THESIS_JSON = WORK / "05a_thesis.json"   # Stage 5a 論證設計（金字塔）
 DECK_JSON = WORK / "05_deck.json"
 SCRIPT_JSON = WORK / "06_script.json"
 
@@ -140,15 +141,6 @@ def write_jsonl(path: Path, rows: Iterable[dict]) -> None:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def strip_code_fence(text: str) -> str:
-    """模型偶爾會包 ```json 圍欄，這裡剝掉再 parse。"""
-    t = text.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z]*\s*\n", "", t)
-        t = re.sub(r"\n```\s*$", "", t)
-    return t.strip()
-
-
 # --------------------------------------------------------------------------
 # 中文字數／排版估算
 # --------------------------------------------------------------------------
@@ -172,11 +164,6 @@ def visual_len(text: str) -> float:
     return total
 
 
-def cjk_chars(text: str) -> int:
-    """純中文字數（逐字稿字數用這個算，標點與空白不計）。"""
-    return sum(1 for ch in text if "一" <= ch <= "鿿")
-
-
 def narration_chars(text: str) -> int:
     """逐字稿計字：中文字 + 英文詞，忽略標點、空白與 [舞台指示]。"""
     t = re.sub(r"\[[^\]]*\]", "", text)
@@ -188,17 +175,39 @@ def narration_chars(text: str) -> int:
 CHARS_PER_LINE_24PT = 18  # 規劃書 §8.4：24pt 中文於 8,208,144 EMU 寬度約 18 字／行
 
 
-def estimate_lines(body: list[dict], size_pt: int = 24) -> int:
+# --------------------------------------------------------------------------
+# 內文樣式：條列頁只准三種寫法，不准裸條列（prompts/outline.md）
+#   chain    論證鏈    ① 因為 → ② 所以 → ③ 因此，每步一條
+#   labeled  標籤＋說明 「機制　折現率貼近零…」，標籤 ≤ label_max_chars
+#   prose    敘事段    一到兩段短文，沒有項目符號
+# --------------------------------------------------------------------------
+BODY_STYLES = ("chain", "labeled", "prose")
+CHAIN_GLYPHS = "①②③④⑤⑥"
+
+
+def body_item_text(style: str | None, item: dict, idx: int = 0) -> str:
+    """一條 body 排到版面上實際會佔的文字（含標籤或序號）。估行數、算字數都用這個。"""
+    text = (item.get("text") or "").strip()
+    if style == "labeled":
+        label = (item.get("label") or "").strip()
+        return f"{label}　{text}" if label else text
+    if style == "chain":
+        g = CHAIN_GLYPHS[idx] if idx < len(CHAIN_GLYPHS) else "・"
+        return f"{g} {text}"
+    return text
+
+
+def estimate_lines(body: list[dict], size_pt: int = 24, style: str | None = None) -> int:
     """估算內文 placeholder 佔幾行。
 
-    body 為 [{"level": 0|1, "text": "..."}]。第二層縮排後可用寬度變窄，
-    每行可容字數依字級與縮排等比縮放。
+    body 為 [{"level": 0|1, "text": "..."}]（labeled 樣式另有 "label"）。
+    第二層縮排後可用寬度變窄，每行可容字數依字級與縮排等比縮放。
     """
     if not body:
         return 0
     lines = 0
-    for item in body:
-        text = (item.get("text") or "").strip()
+    for idx, item in enumerate(body):
+        text = body_item_text(style, item, idx)
         if not text:
             continue
         level = int(item.get("level", 0))
@@ -207,10 +216,6 @@ def estimate_lines(body: list[dict], size_pt: int = 24) -> int:
         per_line = max(per_line, 6)
         lines += max(1, -(-int(visual_len(text) * 100) // int(per_line * 100)))
     return lines
-
-
-def body_text_total(body: list[dict]) -> float:
-    return sum(visual_len((b.get("text") or "")) for b in (body or []))
 
 
 _CONCRETE_RE = re.compile(
@@ -230,12 +235,6 @@ def has_concrete(text: str) -> bool:
 # --------------------------------------------------------------------------
 class SchemaError(Exception):
     pass
-
-
-def require(cond: bool, msg: str, errors: list[str]) -> bool:
-    if not cond:
-        errors.append(msg)
-    return cond
 
 
 def check_keys(obj: dict, required: Iterable[str], where: str, errors: list[str]) -> None:
@@ -273,15 +272,6 @@ def parse_chapter_file(path: Path) -> tuple[dict, str]:
 
 def chapter_files() -> list[Path]:
     return sorted(CHAPTERS.glob("ch*.md"))
-
-
-def chapter_ids() -> list[str]:
-    ids = []
-    for p in chapter_files():
-        m = re.match(r"(ch\d+)", p.name)
-        if m:
-            ids.append(m.group(1))
-    return ids
 
 
 def safe_filename(name: str, maxlen: int = 40) -> str:
@@ -359,7 +349,45 @@ def tone_directive(kind: str = "slide") -> str:
 
 
 # --------------------------------------------------------------------------
-# 頁數預算：沒指定 target_slides 就依分鐘數推算
+# 頁面角色（金字塔結構）：08_qa 的「敘事結構」檢查與 07 的分節都靠 role
+# --------------------------------------------------------------------------
+ROLE_LABELS = {
+    "cover": "封面", "summary": "執行摘要", "map": "全書地圖", "divider": "主張頁籤",
+    "claim": "主張頁", "evidence": "證據頁", "implication": "意涵頁",
+    "counter": "反方頁", "closing": "結語", "appendix": "附錄", "video": "影片頁",
+}
+
+
+# 頁籤／主張句的最低門檻：不是名詞標籤。以這些字結尾的多半是「主題名」
+TOPIC_TAILS = ("的由來", "簡史", "歷史", "篇", "章", "概述", "概論", "介紹", "背景", "現況",
+               "分析", "總覽", "回顧", "與展望", "的問題", "的代價", "的影響")
+
+
+def looks_like_topic(claim: str) -> str | None:
+    """回傳「為什麼這不是主張句」，None 代表通過。"""
+    c = (claim or "").strip()
+    if visual_len(c) < 6:
+        return "太短，看起來是標籤不是句子"
+    if "：" in c or ":" in c:
+        return "含冒號，像是「主題：副題」的標籤"
+    for tail in TOPIC_TAILS:
+        if c.endswith(tail):
+            return f"以「{tail}」結尾，是主題名不是結論句"
+    return None
+
+
+def is_appendix(slide: dict) -> bool:
+    """附錄頁：備用素材，不計入講述時長，也不需要逐字稿。"""
+    return slide.get("role") == "appendix"
+
+
+def talk_slides(slides: list[dict]) -> list[dict]:
+    """真正會講到的頁面（排除附錄）。"""
+    return [s for s in slides if not is_appendix(s)]
+
+
+# --------------------------------------------------------------------------
+# 頁數參考區間：沒指定 target_slides 就依分鐘數推算（只用來 WARN，不裁頁）
 # --------------------------------------------------------------------------
 PAGES_PER_MINUTE = 0.85   # 60 分鐘 → 約 51 頁，落在規劃書的 45–60 區間中段
 

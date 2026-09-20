@@ -17,8 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from _common import (  # noqa: E402
-    DECK_JSON, PROJECT_FILE, die, format_timecode, info, ok, read_json, step,
-    talk_minutes_range, target_slides, warn, write_json,
+    DECK_JSON, PROJECT_FILE, die, format_timecode, info, load_project, ok, read_json, step,
+    talk_minutes_range, talk_slides, target_slides, warn, write_json,
 )
 
 
@@ -67,39 +67,46 @@ def main() -> int:
     lo_m, hi_m = talk_minutes_range()
     target_sec = int(((lo_m + hi_m) / 2) * 60)
 
-    # 影片頁的秒數是實際播放長度，不參與縮放（與 05_outline.assign_durations 同邏輯）
-    fixed = [s for s in slides if s.get("kind") == "video"]
-    flex = [s for s in slides if s.get("kind") != "video"]
+    # 節奏頁（影片／頁籤／引言／大數字）的秒數是設計值、附錄頁不計時，都不參與縮放
+    # （與 05_outline.assign_durations 同邏輯）
+    talk = talk_slides(slides)
+
+    def _fixed(s: dict) -> bool:
+        return s.get("kind") in ("video", "divider") or bool(s.get("quote") or s.get("stat"))
+
+    fixed = [s for s in talk if _fixed(s)]
+    flex = [s for s in talk if not _fixed(s)]
     fixed_sec = sum(int(s.get("duration_sec", 0)) for s in fixed)
     cur_flex = sum(int(s.get("duration_sec", 0)) for s in flex)
 
     before = fixed_sec + cur_flex
-    step(f"重新配速（{len(slides)} 頁）")
+    step(f"重新配速（講述 {len(talk)} 頁" + (f"，附錄 {len(slides) - len(talk)} 頁不計" if len(slides) > len(talk) else "") + "）")
     info(f"目前 {format_timecode(before)} → 目標 {lo_m}–{hi_m} 分"
          f"（取中間值 {format_timecode(target_sec)}）")
     if fixed:
-        info(f"其中影片 {format_timecode(fixed_sec)} 不參與縮放")
+        info(f"其中影片與節奏頁 {format_timecode(fixed_sec)} 不參與縮放")
 
     budget = target_sec - fixed_sec
     if cur_flex <= 0 or not flex:
         die("沒有可調整的頁面")
     if budget < cur_flex * 0.35:
-        warn("影片佔掉太多時間，剩給講述的不足。考慮減少影片或再拉長 minutes。")
+        warn("影片與節奏頁佔掉太多時間，剩給講述的不足。考慮減少影片或再拉長 minutes。")
         budget = int(cur_flex * 0.35)
 
     scale = budget / cur_flex
+    page_max = int((load_project().get("pacing") or {}).get("page_max_sec", 120))
     for s in flex:
-        s["duration_sec"] = max(20, int(round(int(s.get("duration_sec", 60)) * scale / 5) * 5))
+        s["duration_sec"] = min(page_max, max(20, int(round(int(s.get("duration_sec", 60)) * scale / 5) * 5)))
 
-    after = sum(int(s.get("duration_sec", 0)) for s in slides)
+    after = sum(int(s.get("duration_sec", 0)) for s in talk)
     lo_p, hi_p = target_slides()
 
     print()
-    info(f"新總時長 {format_timecode(after)}（{after / len(slides):.0f} 秒/頁）")
-    if lo_p <= len(slides) <= hi_p:
-        ok(f"{len(slides)} 頁落在目標 {lo_p}–{hi_p} 頁區間內")
+    info(f"新總時長 {format_timecode(after)}（{after / len(talk):.0f} 秒/頁）")
+    if lo_p <= len(talk) <= hi_p:
+        ok(f"講述 {len(talk)} 頁落在參考區間 {lo_p}–{hi_p}")
     else:
-        warn(f"{len(slides)} 頁仍不在目標 {lo_p}–{hi_p} 頁區間")
+        info(f"講述 {len(talk)} 頁不在參考區間 {lo_p}–{hi_p}（只是參考，不裁頁）")
 
     if args.dry_run:
         info("--dry-run：未寫檔")

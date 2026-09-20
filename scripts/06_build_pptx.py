@@ -7,6 +7,9 @@
     2. 中文字型只設了 latin → 所有 run 都過 set_ea_font()，寫 <a:ea> 與 <a:cs>
     3. 版面 9 的裝飾群組 → 放圖表前移除 slide 上的 GROUP shape
 
+文字頁的三種樣式（chain / labeled / prose）全部畫在母片原生的內文 placeholder 裡，
+用 run 層級的顏色與粗體做標記，不加自建 shape，QA 的版型純度檢查因此不受影響。
+
 用法：
     python scripts/06_build_pptx.py
     python scripts/06_build_pptx.py --deck work/05_deck.json --out output/xxx.pptx
@@ -20,9 +23,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    DECK_JSON, OUTPUT, TEMPLATE, die, ensure_dirs, estimate_lines, format_timecode,
-    info, limits, load_project, load_spec, ok, read_json, safe_filename, step,
-    visual_len, warn,
+    BODY_STYLES, CHAIN_GLYPHS, DECK_JSON, OUTPUT, TEMPLATE, die, ensure_dirs, estimate_lines,
+    format_timecode, info, limits, load_project, load_spec, ok, read_json, safe_filename,
+    step, visual_len, warn,
 )
 
 from pptx import Presentation  # noqa: E402
@@ -42,6 +45,11 @@ _CS_SUCCESSORS = ("a:sym", "a:hlinkClick", "a:hlinkMouseOver", "a:rtl", "a:extLs
 
 SPEC = load_spec()
 FH_COLORS = ["#B82837", "#939396", "#B08F6E", "#00A0E9", "#262627"]
+
+FLOW_FILL = "E9E4DA"                   # 米白（內頁2 色系）
+FLOW_LINE = "B82837"                   # 復華紅：流程圖線條、樣式標籤與序號
+FLOW_TEXT = "262627"
+FLOW_NOTE = "6B6B6B"
 
 
 # ==========================================================================
@@ -117,6 +125,69 @@ def set_ph(slide, idx: int, text, size_pt: int | None = None, color: str | None 
     return ph
 
 
+def _bu_none(p) -> None:
+    """明確關掉這一段的項目符號。三種樣式自帶序號或標籤，不要再出現母片的 •／–。
+
+    <a:buNone> 在 CT_TextParagraphProperties 裡有固定位置（在 tabLst / defRPr 之前），
+    直接 append 會排到 spcAft 後面而不合 schema，所以用 insert_element_before。
+    """
+    pPr = p._p.get_or_add_pPr()
+    for tag in ("a:buNone", "a:buAutoNum", "a:buChar", "a:buBlip"):
+        el = pPr.find(qn(tag))
+        if el is not None:
+            pPr.remove(el)
+    pPr.insert_element_before(pPr.makeelement(qn("a:buNone"), {}), "a:tabLst", "a:defRPr", "a:extLst")
+
+
+def set_ph_styled(slide, idx: int, body: list[dict], style: str, size_pt: int,
+                  space_after_pt: int | None = None):
+    """三種內文樣式（prompts/outline.md）：
+
+        chain    ① 因為… / ② 所以… / ③ 因此…    序號用復華紅粗體
+        labeled  機制　折現率貼近零…               標籤用復華紅粗體，全形空格後接說明
+        prose    一到兩段短文                        沒有任何標記，段距拉開
+
+    一律垂直置中，跟 set_ph(middle=True) 的內容頁一致。
+    """
+    try:
+        ph = slide.placeholders[idx]
+    except KeyError:
+        warn(f"版面缺少 placeholder idx={idx}，已略過")
+        return None
+    tf = ph.text_frame
+    tf.clear()
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    items = [b for b in (body or []) if (b.get("text") or "").strip()]
+    if not items:
+        return ph
+    for i, it in enumerate(items):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.level = 0
+        p.alignment = PP_ALIGN.LEFT
+        if space_after_pt is not None and i < len(items) - 1:
+            p.space_after = Pt(space_after_pt)
+        _bu_none(p)
+        text = it["text"].strip()
+        if style == "chain":
+            glyph = CHAIN_GLYPHS[i] if i < len(CHAIN_GLYPHS) else "・"
+            runs = [(glyph + " ", FLOW_LINE, True), (text, None, False)]
+        elif style == "labeled":
+            label = (it.get("label") or "").strip()
+            runs = ([(label + "　", FLOW_LINE, True)] if label else []) + [(text, None, False)]
+        else:                                                   # prose
+            runs = [(text, None, False)]
+        for txt, color, bold in runs:
+            r = p.add_run()
+            r.text = txt
+            r.font.size = Pt(size_pt)
+            if bold:
+                r.font.bold = True
+            if color:
+                r.font.color.rgb = RGBColor.from_string(color)
+            set_ea_font(r, EA_FONT)
+    return ph
+
+
 def add_source_line(slide, sources: list[dict]) -> None:
     """模板無『資料來源』預留位置，需自行加 textbox（spec.custom_elements）。"""
     if not sources:
@@ -179,8 +250,11 @@ def _line_capacity(size_pt: int, max_lines_at_24: int) -> int:
     return max(2, int(max_lines_at_24 * 24 / size_pt))
 
 
-def fit_body(body: list[dict]) -> tuple[list[dict], int, list[dict] | None]:
+def fit_body(body: list[dict], style: str | None = None) -> tuple[list[dict], int, list[dict] | None]:
     """回傳 (body, size_pt, 溢出的下一頁 body or None)。
+
+    style 是三種內文樣式之一（或 None）；標籤與序號會佔寬度，估行數要算進去。
+    prose 最大只放到 28pt——32pt 的整段敘事看起來像標題。
 
     24pt 中文一行約 18 字，行高約 0.45in，內文 placeholder 高 4,537,075 EMU
     → 最多約 8 行。
@@ -199,17 +273,18 @@ def fit_body(body: list[dict]) -> tuple[list[dict], int, list[dict] | None]:
         return body, base_pt, None
 
     # 由大到小找第一個塞得下的字級（32 是母片 body_lvl1 的原生大小）
-    for pt in (32, 28, base_pt):
-        if estimate_lines(body, pt) <= _line_capacity(pt, max_lines):
+    sizes = (28, base_pt) if style == "prose" else (32, 28, base_pt)
+    for pt in sizes:
+        if estimate_lines(body, pt, style) <= _line_capacity(pt, max_lines):
             return body, pt, None
 
-    if down_pt >= floor_pt and estimate_lines(body, down_pt) <= max_lines:
+    if down_pt >= floor_pt and estimate_lines(body, down_pt, style) <= max_lines:
         return body, down_pt, None
 
     # 還是爆 → 拆頁：以 20pt 為準，塞到滿為止
     head: list[dict] = []
     for i, item in enumerate(body):
-        if estimate_lines(head + [item], down_pt) > max_lines and head:
+        if estimate_lines(head + [item], down_pt, style) > max_lines and head:
             return head, down_pt, body[i:]
         head.append(item)
     return head, down_pt, None
@@ -312,11 +387,6 @@ LAYOUT6_VIS_TOP = 1628800              # 內頁2-1（版面 6）內容區上緣
 LAYOUT6_VISUALS = ("image", "table", "split")
 VIS_LEFT = 467544
 VIS_WIDTH = 8208144
-
-FLOW_FILL = "E9E4DA"                   # 米白（內頁2 色系）
-FLOW_LINE = "B82837"                   # 復華紅
-FLOW_TEXT = "262627"
-FLOW_NOTE = "6B6B6B"
 
 
 def visual_title(slide, title: str, subtitle: str | None) -> None:
@@ -943,10 +1013,11 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
         return {"count": 1, "split": 0, "charts": charts}
 
     # ---- 一般內頁（含溢排保護與自動拆頁）----
+    style = spec.get("style") if spec.get("style") in BODY_STYLES else None
     rest: list[dict] | None = body
     page_no = 0
     while True:
-        cur, size_pt, rest = fit_body(rest or [])
+        cur, size_pt, rest = fit_body(rest or [], style)
         s = add(prs, layout)
         t = title if page_no == 0 else f"{title}（續）"
 
@@ -960,8 +1031,11 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
                    color=lay["14"].get("color"))
         # 條數少時把段距拉開，配合垂直置中把版面撐開
         n_l1 = sum(1 for b in cur if int(b.get("level", 0)) == 0)
-        gap = 16 if n_l1 <= 3 else (10 if n_l1 <= 4 else None)
-        set_ph(s, body_idx, cur, size_pt=size_pt, middle=True, space_after_pt=gap)
+        gap = 18 if style == "prose" else (16 if n_l1 <= 3 else (10 if n_l1 <= 4 else None))
+        if style:
+            set_ph_styled(s, body_idx, cur, style, size_pt, space_after_pt=gap)
+        else:
+            set_ph(s, body_idx, cur, size_pt=size_pt, middle=True, space_after_pt=gap)
 
         remove_empty_placeholders(s)
         add_source_line(s, sources)
