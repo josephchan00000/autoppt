@@ -27,6 +27,10 @@ deck:
   #   3 = 內頁3 / 3-1   灰
   layout_family: 2
 
+  # 主線的最後一頁（走母片「結尾」版面，自帶復華抬頭與電話）。
+  # 附錄排在它後面，被問到再翻。留空就不放這一頁。
+  closing_wish: "業績長紅"
+
   # 文案語氣：professional | casual | storytelling（內容見下方 tone_presets）
   tone: professional
 

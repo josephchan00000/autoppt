@@ -55,6 +55,8 @@ ALLOWED_CUSTOM_SHAPES = {
     "StatValue", "StatLabel", "TimelineAxis", "TimelineDot", "TimelineLabel",
     "FlowBox", "FlowArrow", "FlowCaption", "FlowLoopLabel",
     "SplitBox", "SplitHeader", "SplitBody", "SplitCaption", "DividerNote",
+    # 卡片式文字頁（06_build_pptx.draw_cards）
+    "CardBox", "CardChip", "CardNum", "CardLink", "CardText", "ProseBar", "ProseText",
 }
 EA_EXPECT = "微軟正黑體"
 
@@ -169,6 +171,7 @@ def main() -> int:
     results.append(check_narration(deck))
     results.append(check_banned_terms(deck))
     results.append(check_page_count(deck))
+    results.append(check_pdf(pptx))
     results.append(make_preview(pptx))
 
     for r in results:
@@ -286,7 +289,7 @@ def check_overflow(deck: dict) -> Result:
 # --- 3. 資料來源 ----------------------------------------------------------
 def check_sources(deck: dict) -> Result:
     r = Result("資料來源", "每頁（封面／頁籤／結尾除外）都有 sources 且非空字串")
-    exempt = {"cover", "divider", "closing"}
+    exempt = {"cover", "divider", "closing", "wish"}
     missing = []
     for s in slides_of(deck):
         if s.get("kind") in exempt:
@@ -634,8 +637,14 @@ def check_structure(deck: dict) -> Result:
             r.warn("反方頁排在結語之後")
     if idx_close is None:
         r.fail("沒有結語頁（role=closing）")
-    elif idx_close != len(talk) - 1:
-        r.warn("結語不是最後一張講述頁")
+    else:
+        # 結語之後只允許祝賀頁（config 的 deck.closing_wish，例如「業績長紅」）；
+        # 附錄排在祝賀頁後面，但不算講述頁。
+        tail = [s.get("role") for s in talk[idx_close + 1:]]
+        if [x for x in tail if x != "wish"]:
+            r.warn(f"結語之後還有 {len(tail)} 頁講述頁，結語應該排在最後（祝賀頁除外）")
+        elif tail.count("wish") > 1:
+            r.warn("祝賀頁不只一張")
     app_idx = [i for i, s in enumerate(slides) if is_appendix(s)]
     close_abs = next((i for i, s in enumerate(slides) if s.get("role") == "closing"), None)
     if app_idx and close_abs is not None and min(app_idx) < close_abs:
@@ -892,6 +901,35 @@ def check_banned_terms(deck: dict) -> Result:
                    + (" …" if len(where[term]) > 6 else ""))
     else:
         r.note("沒有偵測到對岸用語")
+    return r
+
+
+# --- PDF：PPT 換台電腦會跑版，PDF 是交付保證 -------------------------------
+def check_pdf(pptx: Path | None) -> Result:
+    r = Result("PDF", "output 有同名 PDF，且頁數與 PPTX 一致")
+    if not pptx or not pptx.exists():
+        r.skip("找不到 PPTX")
+        return r
+    pdf = pptx.with_suffix(".pdf")
+    if not pdf.exists():
+        r.fail(f"沒有 {pdf.name}：本機請裝 libreoffice-impress 後重跑 06_build_pptx.py")
+        return r
+    try:
+        from pptx import Presentation
+        n_ppt = len(Presentation(str(pptx)).slides)
+    except Exception:
+        n_ppt = 0
+    n_pdf = 0
+    try:
+        import fitz
+        n_pdf = fitz.open(str(pdf)).page_count
+    except Exception:
+        data = pdf.read_bytes()
+        n_pdf = data.count(b"/Type /Page") - data.count(b"/Type /Pages")
+    if n_ppt and n_pdf and n_ppt != n_pdf:
+        r.fail(f"PDF {n_pdf} 頁 ≠ PPTX {n_ppt} 頁：PDF 是舊的，請重跑 06_build_pptx.py")
+    else:
+        r.note(f"{pdf.name}（{n_pdf or '?'} 頁）")
     return r
 
 

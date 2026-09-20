@@ -639,6 +639,11 @@ def build_slides(guide: dict, chapters: list[dict], cfg: dict, author: dict) -> 
     # ---- 結語 ----
     S(layout=L_CLOSING, kind="closing", role="closing", section="closing", title=guide["closing"], duration_sec=30)
 
+    # ---- 祝賀頁：主線的最後一頁，附錄排在它後面 ----
+    wish = ((cfg.get("deck") or {}).get("closing_wish") or "業績長紅").strip()
+    if wish:
+        S(layout=L_CLOSING, kind="wish", role="wish", section="closing", title=wish, duration_sec=10)
+
     # ---- 附錄：沒進主線的章 ----
     appendix = [c for c in chapters if c["ch_id"] not in main_ids]
     if appendix:

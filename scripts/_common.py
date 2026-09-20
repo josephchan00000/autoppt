@@ -410,7 +410,7 @@ ROLE_LABELS = {
     "cover": "封面", "author": "作者頁", "summary": "執行摘要", "map": "章序地圖",
     "part": "分部頁籤", "divider": "章名頁籤", "outline": "大綱頁", "evidence": "示意圖／重點頁",
     "today": "今天的數字", "implication": "全書意涵", "counter": "反方頁", "closing": "結語",
-    "appendix": "附錄", "video": "影片頁",
+    "wish": "祝賀頁", "appendix": "附錄", "video": "影片頁",
 }
 
 

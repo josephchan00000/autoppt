@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import argparse
+import math
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,6 +53,13 @@ FLOW_FILL = "E9E4DA"                   # 米白（內頁2 色系）
 FLOW_LINE = "B82837"                   # 復華紅：流程圖線條、樣式標籤與序號
 FLOW_TEXT = "262627"
 FLOW_NOTE = "6B6B6B"
+
+CARD_FILL = "F4F1EA"                   # 卡片底：比 FLOW_FILL 再淡一階，文字才讀得清楚
+CARD_EDGE = "E0D9CC"                   # 卡片描邊
+CARD_GAP = 130000                      # 卡片之間的間距（EMU）
+CARD_H_MAX = 1700000                   # 單張卡片最高 1.86 吋：再高就只是空白
+CARD_H_MIN = 620000
+CHARS_PER_LINE_24PT_FULL = 18.0        # 24pt 中文於 VIS_WIDTH 寬度約 18 字／行
 
 
 # ==========================================================================
@@ -186,6 +196,221 @@ def set_ph_styled(slide, idx: int, body: list[dict], style: str, size_pt: int,
                 r.font.color.rgb = RGBColor.from_string(color)
             set_ea_font(r, EA_FONT)
     return ph
+
+
+def wrapped_lines(text: str, width_emu: int, size_pt: float) -> int:
+    """這段字在指定寬度、指定字級下會折成幾行。"""
+    cpl = max(4.0, CHARS_PER_LINE_24PT_FULL * (width_emu / VIS_WIDTH) * (24.0 / size_pt))
+    return max(1, math.ceil(visual_len(text or "") / cpl))
+
+
+def line_height_emu(size_pt: float) -> int:
+    """單行佔的高度（含行距）。12700 EMU = 1pt。"""
+    return int(size_pt * 1.42 * 12700)
+
+
+def fit_pt(texts: list[str], width_emu: int, height_emu: int,
+           sizes: tuple[int, ...]) -> int:
+    """由大到小挑第一個塞得下的字級；全都塞不下就回最小的。"""
+    for pt in sizes:
+        need = sum(wrapped_lines(x, width_emu, pt) for x in texts) * line_height_emu(pt)
+        if need <= height_emu:
+            return pt
+    return sizes[-1]
+
+
+def _card_text(slide, left, top, w, h, text, size_pt, color=FLOW_TEXT,
+               name="CardText", align=PP_ALIGN.LEFT):
+    tb = slide.shapes.add_textbox(Emu(int(left)), Emu(int(top)), Emu(int(w)), Emu(int(h)))
+    tb.name = name
+    tf = tb.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    tf.margin_left = tf.margin_right = Emu(0)
+    tf.margin_top = tf.margin_bottom = Emu(0)
+    par = tf.paragraphs[0]
+    par.alignment = align
+    _bu_none(par)
+    r = par.add_run()
+    r.text = text
+    r.font.size = Pt(size_pt)
+    r.font.color.rgb = RGBColor.from_string(color)
+    set_ea_font(r, EA_FONT)
+    return tb
+
+
+_CJK_LATIN_SP = re.compile(r"(?<=[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])[ ]+(?=[A-Za-z0-9$])")
+_LATIN_CJK_SP = re.compile(r"(?<=[A-Za-z0-9%)\]])[ ]+(?=[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])")
+
+
+def tidy_spacing(text: str) -> str:
+    """刪掉中文與英數之間手打的半形空格。
+
+    PowerPoint 與 LibreOffice 本來就會在中英交界補視覺間距，原文再打一個空格
+    就會變成兩倍寬的縫，整頁看起來很鬆散（實跑《時間的代價》時整份都是這個問題）。
+    英文字與英文字之間的空格不動。
+    """
+    if not text or " " not in text:
+        return text
+    return _LATIN_CJK_SP.sub("", _CJK_LATIN_SP.sub("", text))
+
+
+def tidy_deck(node):
+    """整份 deck 走一遍，把所有字串正規化。"""
+    if isinstance(node, str):
+        return tidy_spacing(node)
+    if isinstance(node, list):
+        return [tidy_deck(x) for x in node]
+    if isinstance(node, dict):
+        return {k: (v if k in ("url", "path") else tidy_deck(v)) for k, v in node.items()}
+    return node
+
+
+def placeholder_box(slide, idx: int):
+    """回傳 placeholder 的 (left, top, width, height)；沒有就回 None。"""
+    try:
+        ph = slide.placeholders[idx]
+    except KeyError:
+        warn(f"版面缺少 placeholder idx={idx}，卡片改用預設座標")
+        return None
+    return int(ph.left), int(ph.top), int(ph.width), int(ph.height)
+
+
+def draw_cards(slide, items: list[dict], style: str,
+               left: int, top: int, width: int, height: int) -> None:
+    """卡片式內文（prompts/outline.md「文字頁只准三種樣式」的畫法）。
+
+        labeled  每條一張卡，標籤做成紅底白字的圓角標籤，說明在右側
+        chain    每條一張卡，左側紅色圓形序號，卡與卡之間用細線串起來
+        prose    不做卡片：左側一條紅色粗線 ＋ 大字段落，像引文
+
+    卡片高度由「可用高度 ÷ 條數」決定並夾在 CARD_H_MIN–CARD_H_MAX 之間，
+    整疊置中，所以 2 條與 4 條的頁面看起來都是滿的，不會下面空一大塊。
+    """
+    items = [b for b in (items or []) if (b.get("text") or "").strip()]
+    if not items:
+        return
+
+    if style == "prose":
+        paras = [b["text"].strip() for b in items]
+        inner_w = width - 420000
+        size_pt = fit_pt(paras, inner_w, int(height * 0.78), (28, 26, 24, 22, 20))
+        need = sum(wrapped_lines(x, inner_w, size_pt) for x in paras) * line_height_emu(size_pt)
+        need += 200000 * (len(paras) - 1)
+        block_h = min(height, need + 120000)
+        block_top = top + (height - block_h) // 2
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(int(left)), Emu(int(block_top)),
+                                     Emu(76200), Emu(int(block_h)))
+        bar.name = "ProseBar"
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE)
+        bar.line.fill.background()
+        bar.shadow.inherit = False
+        tb = slide.shapes.add_textbox(Emu(int(left + 300000)), Emu(int(block_top)),
+                                      Emu(int(inner_w)), Emu(int(block_h)))
+        tb.name = "ProseText"
+        tf = tb.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = tf.margin_right = Emu(0)
+        for i, txt in enumerate(paras):
+            par = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+            par.alignment = PP_ALIGN.LEFT
+            _bu_none(par)
+            if i < len(paras) - 1:
+                par.space_after = Pt(16)
+            r = par.add_run()
+            r.text = txt
+            r.font.size = Pt(size_pt)
+            r.font.color.rgb = RGBColor.from_string(FLOW_TEXT)
+            set_ea_font(r, EA_FONT)
+        return
+
+    n = len(items)
+    card_h = (height - CARD_GAP * (n - 1)) / n
+    card_h = int(max(CARD_H_MIN, min(CARD_H_MAX, card_h)))
+    stack_h = card_h * n + CARD_GAP * (n - 1)
+    y0 = top + max(0, (height - stack_h) // 2)
+
+    pad_x = 150000
+    marker_w = 1220000 if style == "labeled" else 700000
+    text_left = left + pad_x + marker_w + 120000
+    text_w = width - pad_x * 2 - marker_w - 120000
+    size_pt = fit_pt([b["text"].strip() for b in items], text_w,
+                     int(card_h * 0.74), (26, 24, 22, 20, 18, 16))
+
+    for i, it in enumerate(items):
+        cy = y0 + i * (card_h + CARD_GAP)
+        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Emu(int(left)), Emu(int(cy)),
+                                      Emu(int(width)), Emu(int(card_h)))
+        card.name = "CardBox"
+        card.fill.solid()
+        card.fill.fore_color.rgb = RGBColor.from_string(CARD_FILL)
+        card.line.color.rgb = RGBColor.from_string(CARD_EDGE)
+        card.line.width = Pt(1)
+        card.shadow.inherit = False
+        card.adjustments[0] = 0.08
+        card.text_frame.text = ""
+
+        if style == "labeled":
+            label = (it.get("label") or "").strip()
+            chip_h = min(520000, int(card_h * 0.62))
+            chip = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE, Emu(int(left + pad_x)),
+                Emu(int(cy + (card_h - chip_h) / 2)), Emu(int(marker_w)), Emu(int(chip_h)))
+            chip.name = "CardChip"
+            chip.fill.solid()
+            chip.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE)
+            chip.line.fill.background()
+            chip.shadow.inherit = False
+            chip.adjustments[0] = 0.18
+            ctf = chip.text_frame
+            ctf.word_wrap = True
+            ctf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            ctf.margin_left = ctf.margin_right = Emu(36000)
+            cp = ctf.paragraphs[0]
+            cp.alignment = PP_ALIGN.CENTER
+            _bu_none(cp)
+            cr = cp.add_run()
+            cr.text = label
+            cr.font.size = Pt(18 if visual_len(label) <= 4 else 16)
+            cr.font.bold = True
+            cr.font.color.rgb = RGBColor.from_string("FFFFFF")
+            set_ea_font(cr, EA_FONT)
+        else:                                             # chain：圓形序號
+            d = min(560000, int(card_h * 0.56))
+            cx = left + pad_x + (marker_w - d) // 2
+            circ = slide.shapes.add_shape(MSO_SHAPE.OVAL, Emu(int(cx)),
+                                          Emu(int(cy + (card_h - d) / 2)), Emu(int(d)), Emu(int(d)))
+            circ.name = "CardNum"
+            circ.fill.solid()
+            circ.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE)
+            circ.line.fill.background()
+            circ.shadow.inherit = False
+            ntf = circ.text_frame
+            ntf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            ntf.margin_left = ntf.margin_right = Emu(0)
+            np_ = ntf.paragraphs[0]
+            np_.alignment = PP_ALIGN.CENTER
+            _bu_none(np_)
+            nr = np_.add_run()
+            nr.text = str(i + 1)
+            nr.font.size = Pt(20)
+            nr.font.bold = True
+            nr.font.color.rgb = RGBColor.from_string("FFFFFF")
+            set_ea_font(nr, EA_FONT)
+            if i < n - 1:                                 # 串起序號的細線，讓推論看得出順序
+                link = slide.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE, Emu(int(cx + d / 2 - 12700)),
+                    Emu(int(cy + card_h)), Emu(25400), Emu(int(CARD_GAP)))
+                link.name = "CardLink"
+                link.fill.solid()
+                link.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE)
+                link.line.fill.background()
+                link.shadow.inherit = False
+
+        _card_text(slide, text_left, cy + 60000, text_w, card_h - 120000,
+                   it["text"].strip(), size_pt)
 
 
 def add_source_line(slide, sources: list[dict]) -> None:
@@ -540,10 +765,25 @@ def draw_table(slide, tbl: dict, top: int | None = None) -> None:
     if not cols or not rows:
         return
     nr, nc = len(rows) + 1, len(cols)
-    top = (VIS_TOP if top is None else top) + 120000
-    height = min(SPEC["content_area_bottom_emu"] - top - 150000, 380000 * nr)
-    shape = slide.shapes.add_table(nr, nc, Emu(VIS_LEFT), Emu(top), Emu(VIS_WIDTH), Emu(height))
+    area_top = (VIS_TOP if top is None else top) + 120000
+    avail = SPEC["content_area_bottom_emu"] - area_top - 150000
+
+    # 列高由可用高度分配，再夾在上下限之間；分不滿就整張表垂直置中。
+    # 舊版固定每列 380000 EMU，三列的表只佔內容區四分之一，底下空一大塊。
+    hdr_h = 520000
+    row_h = int(max(430000, min(1500000, (avail - hdr_h) / max(len(rows), 1))))
+    total_h = hdr_h + row_h * len(rows)
+    area_top += max(0, (avail - total_h) // 2)
+
+    shape = slide.shapes.add_table(nr, nc, Emu(VIS_LEFT), Emu(area_top),
+                                   Emu(VIS_WIDTH), Emu(total_h))
     table = shape.table
+    table.rows[0].height = Emu(hdr_h)
+    for i in range(1, nr):
+        table.rows[i].height = Emu(row_h)
+    # 列愈高，字就該愈大，版面才不會看起來是被拉長的空格
+    body_pt = 12 if row_h < 620000 else (14 if row_h < 900000 else 16)
+    hdr_pt = min(18, body_pt + 2)
     widths = tbl.get("widths")
     if widths and len(widths) == nc:
         total = sum(widths)
@@ -567,12 +807,12 @@ def draw_table(slide, tbl: dict, top: int | None = None) -> None:
         set_ea_font(r, EA_FONT)
 
     for j, col in enumerate(cols):
-        _cell(table.cell(0, j), col, 14, "FFFFFF", True, FLOW_LINE)
+        _cell(table.cell(0, j), col, hdr_pt, "FFFFFF", True, FLOW_LINE)
     for i, row in enumerate(rows, start=1):
         fill = "FFFFFF" if i % 2 else FLOW_FILL
         for j in range(nc):
             val = row[j] if j < len(row) else ""
-            _cell(table.cell(i, j), val, 12, FLOW_TEXT, j == 0, fill)
+            _cell(table.cell(i, j), val, body_pt, FLOW_TEXT, j == 0, fill)
 
 
 def draw_timeline(slide, tl: dict) -> None:
@@ -621,12 +861,35 @@ def draw_split(slide, sp: dict, caption: list[dict] | None = None,
     """雙欄對比；caption 畫在兩欄下方。"""
     gap = 300000
     col_w = int((VIS_WIDTH - gap) / 2)
-    top = (VIS_TOP if top is None else top) + 150000
+    area_top = (VIS_TOP if top is None else top) + 150000
     bottom = SPEC["content_area_bottom_emu"] - 200000
     cap_lines = [b for b in (caption or []) if (b.get("text") or "").strip()]
     if cap_lines:
         bottom -= 250000 + 300000 * len(cap_lines)
-    h = bottom - top
+    avail = bottom - area_top
+
+    # 標題長度決定標題列高與字級：舊版固定 430000 EMU、17pt，
+    # 標題一折行就會壓出紅底之外。
+    inner_w = col_w - 120000
+    titles = [(sp.get(s) or {}).get("title", "") for s in ("left", "right")]
+    hdr_pt = 17
+    while hdr_pt > 12 and max(wrapped_lines(x, inner_w - 120000, hdr_pt) for x in titles) > 2:
+        hdr_pt -= 1
+    hdr_lines = max(wrapped_lines(x, inner_w - 120000, hdr_pt) for x in titles)
+    hdr_h = 180000 + line_height_emu(hdr_pt) * hdr_lines
+
+    # 內容高度依實際條目計算，兩欄取高者；算完再整體垂直置中，
+    # 框就不會是「上面三行字、下面一大片空白」。
+    body_w = col_w - 300000
+    all_items = [str(x) for s in ("left", "right") for x in ((sp.get(s) or {}).get("items") or [])]
+    item_pt = fit_pt(all_items, body_w, int((avail - hdr_h) * 0.8), (18, 17, 16, 15, 14, 13))
+    need = 0
+    for s in ("left", "right"):
+        its = [str(x) for x in ((sp.get(s) or {}).get("items") or [])]
+        n_lines = sum(wrapped_lines(x, body_w, item_pt) for x in its)
+        need = max(need, n_lines * line_height_emu(item_pt) + 140000 * max(len(its) - 1, 0))
+    h = int(min(avail, max(2000000, hdr_h + need + 500000)))
+    top = area_top + max(0, (avail - h) // 2)
     for k, side in enumerate(("left", "right")):
         data = sp.get(side) or {}
         left = VIS_LEFT + k * (col_w + gap)
@@ -641,7 +904,7 @@ def draw_split(slide, sp: dict, caption: list[dict] | None = None,
         box.shadow.inherit = False
 
         hdr = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(left + 60000), Emu(top + 60000),
-                                     Emu(col_w - 120000), Emu(430000))
+                                     Emu(inner_w), Emu(int(hdr_h)))
         hdr.name = "SplitHeader"
         hdr.fill.solid()
         hdr.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE if accent else "939396")
@@ -653,23 +916,26 @@ def draw_split(slide, sp: dict, caption: list[dict] | None = None,
         par.alignment = PP_ALIGN.CENTER
         r = par.add_run()
         r.text = data.get("title", "")
-        r.font.size = Pt(17)
+        r.font.size = Pt(hdr_pt)
         r.font.bold = True
         r.font.color.rgb = RGBColor.from_string("FFFFFF")
         set_ea_font(r, EA_FONT)
 
         items = data.get("items") or []
-        tb = slide.shapes.add_textbox(Emu(left + 150000), Emu(top + 600000),
-                                      Emu(col_w - 300000), Emu(h - 700000))
+        body_top = top + 60000 + hdr_h + 120000
+        tb = slide.shapes.add_textbox(Emu(left + 150000), Emu(int(body_top)),
+                                      Emu(body_w), Emu(int(top + h - body_top - 120000)))
         tb.name = "SplitBody"
         body = tb.text_frame
         body.word_wrap = True
+        body.vertical_anchor = MSO_ANCHOR.MIDDLE
         for i, it in enumerate(items):
             par = body.paragraphs[0] if i == 0 else body.add_paragraph()
-            par.space_after = Pt(10)
+            par.space_after = Pt(11)
+            _bu_none(par)
             r = par.add_run()
             r.text = "・" + str(it)
-            r.font.size = Pt(14)
+            r.font.size = Pt(item_pt)
             r.font.color.rgb = RGBColor.from_string(FLOW_TEXT)
             set_ea_font(r, EA_FONT)
 
@@ -786,6 +1052,8 @@ def main() -> int:
     ap.add_argument("--deck", default=str(DECK_JSON))
     ap.add_argument("--template", default=str(TEMPLATE))
     ap.add_argument("--out", default="")
+    ap.add_argument("--no-pdf", action="store_true",
+                    help="不要順便轉 PDF（預設會轉，PPT 換台電腦常跑版）")
     args = ap.parse_args()
 
     ensure_dirs()
@@ -797,7 +1065,7 @@ def main() -> int:
     if not deck_path.exists():
         die(f"找不到藍圖：{deck_path}，請先跑 05_outline.py")
 
-    deck = read_json(deck_path)
+    deck = tidy_deck(read_json(deck_path))
     meta, slides_spec = deck.get("meta", {}), deck.get("slides", [])
     if not slides_spec:
         die("deck.json 沒有任何 slides")
@@ -829,6 +1097,10 @@ def main() -> int:
     prs.save(str(out_path))
 
     ok(f"PPTX → {out_path}（{built} 頁）")
+    if not args.no_pdf:
+        pdf = export_pdf(out_path)
+        if pdf:
+            ok(f"PDF  → {pdf}")
     if split_pages:
         info(f"{split_pages} 頁因內文過長自動拆頁（主標加「(續)」）")
     if charts_made:
@@ -837,6 +1109,32 @@ def main() -> int:
     info("下一步：python scripts/07_build_script.py（逐字稿）")
     info("        python scripts/08_qa.py --all（品管）")
     return 0
+
+
+def export_pdf(pptx_path: Path) -> Path | None:
+    """用 LibreOffice 轉 PDF：PPT 在別台電腦開常常跑版，PDF 是唯一保證。
+
+    雲端環境如果只裝了 libreoffice-core（缺 Impress 匯入濾鏡）會轉失敗，
+    這不是錯誤，提示使用者在本機補跑即可：
+        sudo apt install libreoffice-impress
+        python scripts/06_build_pptx.py --pdf-only
+    """
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        warn("找不到 LibreOffice，略過 PDF；本機請裝 libreoffice-impress 後重跑")
+        return None
+    out_pdf = pptx_path.with_suffix(".pdf")
+    try:
+        subprocess.run([soffice, "--headless", "--convert-to", "pdf",
+                        "--outdir", str(pptx_path.parent), str(pptx_path)],
+                       check=True, capture_output=True, timeout=900)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        warn(f"PDF 轉檔失敗（{type(e).__name__}）：本機請裝 libreoffice-impress 後重跑")
+        return None
+    if not out_pdf.exists():
+        warn("PDF 轉檔沒有產出檔案，多半是缺 Impress 匯入濾鏡")
+        return None
+    return out_pdf
 
 
 def _out_name(meta: dict, cfg: dict) -> str:
@@ -897,6 +1195,14 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
             r.font.size = Pt(18)
             r.font.color.rgb = RGBColor.from_string("939396")
             set_ea_font(r, EA_FONT)
+        remove_empty_placeholders(s)
+        set_notes(s, narration)
+        return {"count": 1, "split": 0, "charts": 0}
+
+    # ---- 祝賀頁（主線最後一頁，走母片「結尾」版面，自帶復華抬頭與電話）----
+    if kind == "wish":
+        s = add(prs, layout)
+        set_ph(s, 14, title or "業績長紅", size_pt=54, color="B82837")
         remove_empty_placeholders(s)
         set_notes(s, narration)
         return {"count": 1, "split": 0, "charts": 0}
@@ -1030,7 +1336,14 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
     rest: list[dict] | None = body
     page_no = 0
     while True:
-        cur, size_pt, rest = fit_body(rest or [], style)
+        if style:
+            # 卡片式自己算字級與高度，這裡只負責「一頁放幾張」：
+            # prose 兩段、chain/labeled 四張，超過就拆下一頁。
+            per_page = 2 if style == "prose" else 4
+            cur, rest = (rest or [])[:per_page], (rest or [])[per_page:] or None
+            size_pt = 0
+        else:
+            cur, size_pt, rest = fit_body(rest or [], style)
         s = add(prs, layout)
         t = title if page_no == 0 else f"{title}（續）"
 
@@ -1042,12 +1355,15 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
         if has_sub and subtitle:
             set_ph(s, 14, subtitle, size_pt=lay["14"].get("size_pt", 24),
                    color=lay["14"].get("color"))
-        # 條數少時把段距拉開，配合垂直置中把版面撐開
-        n_l1 = sum(1 for b in cur if int(b.get("level", 0)) == 0)
-        gap = 18 if style == "prose" else (16 if n_l1 <= 3 else (10 if n_l1 <= 4 else None))
         if style:
-            set_ph_styled(s, body_idx, cur, style, size_pt, space_after_pt=gap)
+            # 內文框只借它的座標，字畫在卡片上；空框稍後由 remove_empty_placeholders 清掉
+            geo = placeholder_box(s, body_idx)
+            if geo:
+                draw_cards(s, cur, style, *geo)
         else:
+            # 條數少時把段距拉開，配合垂直置中把版面撐開
+            n_l1 = sum(1 for b in cur if int(b.get("level", 0)) == 0)
+            gap = 16 if n_l1 <= 3 else (10 if n_l1 <= 4 else None)
             set_ph(s, body_idx, cur, size_pt=size_pt, middle=True, space_after_pt=gap)
 
         remove_empty_placeholders(s)
