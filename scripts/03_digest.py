@@ -314,7 +314,7 @@ def validate_digest(path: Path, ch_id: str) -> list[str]:
         elif kt["zh"].strip() and visual_len(kt["zh"]) > 16:
             errors.append(f"{w}.zh 超過 16 字，投影片放不下")
         if visual_len(kt.get("note") or "") > 24:
-            errors.append(f"{w}.note 超過 20 字")
+            errors.append(f"{w}.note 超過 24 字（{visual_len(kt.get('note') or ''):.0f}）")
 
     # --- stories 底線 8：有人物、時間、轉折 ---
     sts = d.get("stories")

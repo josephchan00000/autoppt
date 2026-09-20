@@ -266,7 +266,8 @@ def check_overflow(deck: dict) -> Result:
 
         for b in body:
             lv = int(b.get("level", 0))
-            if lv > max_lv and kind != "cover":
+            # 封面與章序地圖（toc）的階層是母片固定版面（分部 → 章名），不算條列的第二層
+            if lv > max_lv and kind not in ("cover", "toc"):
                 r.fail(f"{sid} 出現第 {lv + 1} 層（最多 {max_lv + 1} 層）")
             # prose 的段落上限另外在「條列樣式」檢查
             if lv == 0 and style != "prose" and visual_len(b.get("text") or "") > l1_max:
@@ -730,7 +731,12 @@ def check_stories(deck: dict) -> Result:
             continue
         who = re.split(r"[（(，,]", hint, 1)[0].strip()
         narr = " ".join((s.get("narration") or "") for s in pages)
+        # 逐字稿是口語，「拉格什統治者恩美鐵那」講出來會變成「拉格什的統治者恩美鐵那」，
+        # 所以除了整串，也接受：原文人名（story_hint 括號裡的拉丁字）、稱謂後面的名字（末四字）。
         keys = [who] + [w for w in re.split(r"[\s・·]", who) if len(w) >= 2]
+        keys += re.findall(r"[A-Z][A-Za-z.\-]+(?:\s+[A-Z][A-Za-z.\-]+)+", hint)
+        if len(who) >= 5:
+            keys.append(who[-4:])
         if not any(k and k.lower() in narr.lower() for k in keys):
             missing.append(f"{cid}（{who}）")
     if no_hint:
