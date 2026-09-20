@@ -136,8 +136,8 @@ def main() -> int:
         if args.check_deck:
             results += [check_structure(deck), check_wording(deck), check_stories(deck),
                         check_body_styles(deck), check_overflow(deck), check_sources(deck),
-                        check_concrete(deck), check_rhythm(deck), check_banned_terms(deck),
-                        check_page_count(deck)]
+                        check_concrete(deck), check_rhythm(deck), check_ai_tone(deck),
+                        check_banned_terms(deck), check_page_count(deck)]
         if args.check_narration:
             results.append(check_narration(deck))
         for r in results:
@@ -169,6 +169,7 @@ def main() -> int:
     results.append(check_layout_purity(pptx))
     results.append(check_fonts(pptx))
     results.append(check_narration(deck))
+    results.append(check_ai_tone(deck))
     results.append(check_banned_terms(deck))
     results.append(check_page_count(deck))
     results.append(check_pdf(pptx))
@@ -901,6 +902,77 @@ def check_banned_terms(deck: dict) -> Result:
                    + (" …" if len(where[term]) > 6 else ""))
     else:
         r.note("沒有偵測到對岸用語")
+    return r
+
+
+# --- AI 味：投影片讀起來像不像人寫的 -------------------------------------
+_LATIN_WORD = re.compile(r"[A-Za-z][A-Za-z'’.\-]{1,}")
+# 這些字出現代表句子裡有動作或判斷，不是純名詞堆疊
+_VERBISH = ("是", "不", "會", "要", "把", "被", "讓", "在", "有", "沒", "從", "到", "回",
+            "漲", "跌", "升", "降", "借", "付", "買", "賣", "做", "走", "看", "說", "剩",
+            "變", "算", "換", "壓", "拉", "撐", "生", "收", "花", "欠", "只", "才", "就")
+
+
+def check_ai_tone(deck: dict) -> Result:
+    """實跑《時間的代價》時使用者的原話：「用字不夠平易近人，太 AI 感」。
+
+    拆解出三個可以量的特徵，全部只 WARN（語氣是人判斷的，程式只負責提醒）：
+      1. 冒號句式  「名詞：名詞」一頁三條以上，整頁就像詞條表
+      2. 英文夾雜  一頁超過兩個英文原詞，中文就被切碎了
+      3. 排比      三條以上長度幾乎一樣，是湊出來的對仗，不是想出來的話
+    另外檢查條列有沒有動詞（純名詞堆疊）。
+    """
+    r = Result("AI 味", "投影片不要：一頁三條冒號句式／超過兩個英文原詞／三條等長排比")
+    colon_pages, latin_pages, parallel_pages, nounish = [], [], [], []
+    total_items = colon_items = 0
+    # 封面、章序地圖、頁籤、結語、祝賀頁的內文是人名與章名，不是句子
+    skip_roles = {"cover", "map", "divider", "part", "closing", "wish"}
+
+    for s in talk_slides(slides_of(deck)):
+        if s.get("role") in skip_roles:
+            continue
+        sid = s.get("id")
+        texts = [(b.get("text") or "").strip() for b in (s.get("body") or [])
+                 if (b.get("text") or "").strip()]
+        if not texts:
+            continue
+        total_items += len(texts)
+        n_colon = sum(1 for x in texts if "：" in x or ":" in x)
+        colon_items += n_colon
+        if n_colon >= 3:
+            colon_pages.append(sid)
+
+        blob = " ".join(texts) + " " + (s.get("title") or "") + " " + (s.get("subtitle") or "")
+        words = {w.lower() for w in _LATIN_WORD.findall(blob) if len(w) > 1}
+        if len(words) > 2:
+            latin_pages.append(f"{sid}（{len(words)} 個）")
+
+        if len(texts) >= 3:
+            lens = sorted(visual_len(x) for x in texts)
+            if lens[-1] - lens[0] <= 3:
+                parallel_pages.append(sid)
+
+        for x in texts:
+            # 有數字就當成有實質內容（「2023 年 Hayek Book Prize 得主」不算堆疊）
+            if not any(v in x for v in _VERBISH) and not re.search(r"[0-9０-９]", x):
+                nounish.append(f"{sid}「{x[:14]}」")
+
+    if colon_pages:
+        r.warn(f"{len(colon_pages)} 頁有三條以上冒號句式，改寫成完整的話："
+               f"{', '.join(colon_pages[:8])}")
+    if total_items and colon_items / total_items > 0.5:
+        r.warn(f"全書 {colon_items}/{total_items} 條是冒號句式（{colon_items / total_items:.0%}），"
+               "整份看起來像詞條表")
+    if latin_pages:
+        r.warn(f"{len(latin_pages)} 頁英文原詞超過兩個，只留作者自己造的詞："
+               f"{', '.join(latin_pages[:8])}")
+    if parallel_pages:
+        r.warn(f"{len(parallel_pages)} 頁的要點幾乎等長，像湊出來的排比："
+               f"{', '.join(parallel_pages[:8])}")
+    if nounish:
+        r.warn(f"{len(nounish)} 條沒有動作詞，是名詞堆疊：{', '.join(nounish[:6])}")
+    if r.status == "PASS":
+        r.note("沒有偵測到冒號句式、英文夾雜與等長排比")
     return r
 
 
