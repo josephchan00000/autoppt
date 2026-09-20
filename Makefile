@@ -11,6 +11,7 @@
 #   make outline  Stage 5b  由 guide.json 產藍圖 work/05_deck.json
 #   make build    Stage 6+7 產 PPTX + 逐字稿 DOCX
 #   make qa       Stage 8   自動品管
+#   make illus    把手繪 SVG 轉成示意圖 PNG（＋總覽圖）
 #   make images   匯出圖片建議清單 output/圖片建議.md
 #   make photos   到 Wikimedia Commons 抓章名頁籤的候選照片（要能上網）
 #   make revise   改稿迴圈：改完 deck.json 後重跑 6→8
@@ -23,7 +24,7 @@ BOOK    ?= $(firstword $(wildcard input/book.* input/*.pdf input/*.epub input/*.
 
 .DEFAULT_GOAL := help
 .PHONY: help next setup check extract split digest research guide outline build pptx script qa \
-        images photos deliver revise preview check-sources clean-work clean-output distclean
+        illus images photos deliver revise preview check-sources clean-work clean-output distclean
 
 help:
 	@grep -E '^#   make' Makefile | sed 's/^#   /  /'
@@ -92,6 +93,9 @@ qa:
 preview:
 	$(PY) scripts/08_qa.py --preview
 
+illus:
+	$(PY) tools/make_illustrations.py --contact
+
 images:
 	$(PY) tools/image_suggestions.py
 
@@ -103,7 +107,7 @@ photos:
 revise: build qa
 
 # 交付前的最後三步
-deliver: build images qa
+deliver: illus build images qa
 	@$(PY) scripts/00_next.py
 
 # --- 清理 -----------------------------------------------------------------

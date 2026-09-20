@@ -27,6 +27,7 @@ from _common import (  # noqa: E402
 )
 
 BOOKFIGS = WORK / "08_bookfigs"
+ILLUS = WORK / "10_illus"
 PY = ".venv/bin/python"
 
 
@@ -73,6 +74,11 @@ def _deck_stats() -> dict:
         "narrated": sum(1 for s in talk if (s.get("narration") or "").strip()),
         "hints": sum(1 for s in slides if s.get("image_hint")),
     }
+
+
+def _illus_count() -> int:
+    """畫好的示意圖張數。contact.png 是總覽圖，不是其中一張。"""
+    return len([f for f in ILLUS.glob("*.png") if f.stem != "contact"])
 
 
 def _outputs() -> dict:
@@ -162,6 +168,12 @@ def stages() -> list[dict]:
              detail=f"pptx {len(out['pptx'])}／pdf {len(out['pdf'])}／docx {len(out['docx'])}",
              todo=f"{PY} scripts/06_build_pptx.py（自動轉 PDF）&& {PY} scripts/07_build_script.py",
              show="PDF 直接翻，PPT 換台電腦容易跑版"),
+        dict(key="7b", name="示意圖",
+             done=st.get("hints", 0) == 0 or _illus_count() >= st.get("hints", 0),
+             detail=f"{_illus_count()}/{st.get('hints', 0)} 章",
+             todo=f"依 prompts/illustration.md 畫 work/10_illus/<頁面 id>.svg"
+                  f" → {PY} tools/make_illustrations.py --contact",
+             show="work/10_illus/contact.png。看不懂那是什麼就重畫成更簡單的物件"),
         dict(key="8a", name="圖片建議",
              done=out["imglist"],
              detail="output/圖片建議.md",

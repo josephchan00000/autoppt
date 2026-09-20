@@ -162,6 +162,18 @@ python scripts/07_build_script.py
 - **完成條件**：`output/` 有 pptx、pdf、逐字稿 docx
 - **停下來給他看**：PDF（PPT 換台電腦容易跑版，要他看 PDF）
 
+### Stage 7b 示意圖 ← 這是你的工作，自己畫
+```bash
+python tools/make_illustrations.py --status    # 哪幾章還沒畫
+# 依 prompts/illustration.md 寫 work/10_illus/<頁面 id>.svg
+python tools/make_illustrations.py --contact   # 轉 PNG ＋ 出總覽圖
+```
+一章一張，畫該章故事的**場景或核心物件**。建築、器物、山形、圖表畫得好；
+**人臉與動物畫不好**（實跑過，一隻烏鴉變成一團血塊），要換成能代表它的物件。
+
+- **完成條件**：每一個章名頁籤都有對應的 PNG
+- **停下來給他看**：`work/10_illus/contact.png`（一次看完十幾張，問題通常是整組的）
+
 ### Stage 8 圖片建議 + 品管
 ```bash
 python tools/image_suggestions.py    # → output/圖片建議.md
@@ -197,11 +209,12 @@ python tools/fetch_story_photos.py   # 抓候選圖到 work/09_photos/_candidate
   兩欄取高者、整體垂直置中。
 - **中英之間不要打空格**：`tidy_deck()` 會自動刪掉。PowerPoint 本來就會補視覺間距，
   再打一個就變兩倍寬的縫。
-- **章名頁籤右側會畫一張「場景卡」**：大字年份＋人物＋地點，取自該章故事的
-  `image_hint`（由 `05_outline.py` 自動產生）。這不是佔位符，是成品——直接上台也不空。
-  故事本身不上投影片（故事進逐字稿），卡片只把時空標出來。
-  **使用者把照片放成 `work/09_photos/<頁面 id>.jpg` 就會自動換成照片**，
-  裁切填滿同一個框。`make photos` 會去 Wikimedia Commons 抓候選圖附授權（要能上網）。
+- **章名頁籤右側那一格**，優先序：
+  1. `work/09_photos/<頁面 id>.jpg` 使用者自己找的照片（裁切填滿，最有說服力）
+  2. `work/10_illus/<頁面 id>.png` **你自己畫的 SVG 示意圖**（見 `prompts/illustration.md`）
+  3. 都沒有 → 程式畫文字場景卡（大字年份＋人物＋地點），不會開天窗
+  放圖時圖下自動帶一行「年份　人物｜地點」，太長會自己退成短的版本。
+  `make photos` 會去 Wikimedia Commons 抓候選照片附授權（要能上網，雲端會 403）。
 - **視覺頁的版面歸屬**：`image` / `table` / `split` 走**內頁2-1**（上限 14 / 21 字）；
   `flow` / `timeline` / `quote` / `stat` / 自畫 `chart` 走**空白內頁**（上限 20 / 30）。
 
@@ -231,6 +244,7 @@ python tools/fetch_story_photos.py   # 抓候選圖到 work/09_photos/_candidate
 | `output/*.pdf` | 同上，自動轉（PPT 會跑版，PDF 是保證） |
 | `output/*_逐字稿.docx` | `07_build_script.py` |
 | `output/圖片建議.md` | `tools/image_suggestions.py` |
+| `work/10_illus/contact.png` | `tools/make_illustrations.py --contact`（示意圖總覽，給他確認） |
 | `output/qa_report.md` | `08_qa.py --all`，不能有 FAIL |
 
 打包給下一個視窗用：`git archive --format=zip --prefix=autoppt/ -o autoppt.zip HEAD`
@@ -267,8 +281,9 @@ python tools/fetch_story_photos.py   # 抓候選圖到 work/09_photos/_candidate
 - 不要編造 URL 或數據；作者頁每一句都要有來源
 - 不要動不動就用 matplotlib 畫圖（先讀 prompts/visuals.md 的優先序）
 - 不要只交 PPTX：PDF、逐字稿、圖片建議、QA 報告一起給
-- 不要在雲端硬抓圖：Commons 與機構網站都被 egress 白名單擋掉，
-  章名頁籤畫場景卡就好，照片讓使用者在自己的電腦用 `make photos` 補
+- 不要在雲端硬抓圖：Commons 與機構網站都被 egress 白名單擋掉（403），自己畫 SVG
+- 不要畫人臉與動物：畫建築、器物、山形、圖表，那些才畫得出來
+- 不要畫完不看：`work/10_illus/contact.png` 一定要自己開來看過
 - 不要替使用者判斷圖片授權可不可以用：把授權原文列給他，他自己決定
 - 不要用 `yaml.safe_dump` 覆寫 project.yaml（會洗掉註解）
 - 不要重跑已經完成的階段

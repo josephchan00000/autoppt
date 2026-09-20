@@ -249,6 +249,7 @@ IMG_SLOT = (5990000, 2010000, 2520000, 2750000)   # 章名頁籤右側的直式�
 
 
 PHOTOS = WORK / "09_photos"          # 使用者自己找到的照片：<頁面 id>.jpg / .png
+ILLUS = WORK / "10_illus"            # 自己畫的示意圖：<頁面 id>.svg → .png
 _YEAR = r"(?:1[0-9]{3}|20[0-9]{2})"
 _YEAR_ONLY = re.compile(rf"^({_YEAR})\s*年?$")
 # 「年代」不能拆：1890 年代是一個詞，挑掉 1890 只會剩「代至 1930」
@@ -278,15 +279,23 @@ def split_when(when: str) -> tuple[str, int, str]:
     return when, 16, ""
 
 
-def story_photo(slide_id: str) -> Path | None:
-    """work/09_photos/<頁面 id>.(jpg|jpeg|png|webp) 有圖就用圖，沒有就畫場景卡。"""
+def story_image(slide_id: str) -> Path | None:
+    """章名頁籤右側放什麼，優先序：
+
+        1. work/09_photos/<id>.jpg   使用者自己找的照片（最強）
+        2. work/10_illus/<id>.png    自己畫的示意圖（prompts/illustration.md）
+        3. 都沒有 → draw_story_card 畫文字場景卡
+
+    照片一定贏，因為真實的人與地點比任何示意圖都有說服力。
+    """
     if not slide_id:
         return None
     for ext in (".jpg", ".jpeg", ".png", ".webp"):
         f = PHOTOS / f"{slide_id}{ext}"
         if f.exists():
             return f
-    return None
+    f = ILLUS / f"{slide_id}.png"
+    return f if f.exists() else None
 
 
 def place_story_photo(slide, png: Path) -> None:
@@ -395,12 +404,40 @@ def draw_story_card(slide, hint: dict) -> None:
 
 
 def _divider_visual(slide, spec: dict) -> None:
-    """章名頁籤右側：使用者放了照片就用照片，沒有就畫場景卡。"""
-    photo = story_photo(spec.get("id", ""))
-    if photo:
-        place_story_photo(slide, photo)
-    else:
+    """章名頁籤右側：照片 > 示意圖 > 文字場景卡。放圖時把時空寫成圖下一行小字。"""
+    img = story_image(spec.get("id", ""))
+    if not img:
         draw_story_card(slide, spec.get("image_hint") or {})
+        return
+    place_story_photo(slide, img)
+    hint = spec.get("image_hint") or {}
+    year = split_when((hint.get("when") or "").strip())[0]
+    who = (hint.get("who") or "").strip()
+    where = (hint.get("where") or "").strip()
+    left, top, w, h = IMG_SLOT
+    cap_w = w + 400000
+    # 圖下只有一行的高度（再下去就壓到紅線），所以由詳到簡挑第一個放得下的
+    for cand in (f"{year}　{who}｜{where}", f"{year}　{who}", f"{year}　{where}", year, who):
+        cap = cand.strip("　｜").strip()
+        if cap and wrapped_lines(cap, cap_w, 11) <= 1:
+            break
+    else:
+        return
+    if not cap:
+        return
+    tb = slide.shapes.add_textbox(Emu(left - 200000), Emu(top + h + 60000),
+                                  Emu(cap_w), Emu(260000))
+    tb.name = "StoryText"
+    tf = tb.text_frame
+    tf.word_wrap = True
+    par = tf.paragraphs[0]
+    par.alignment = PP_ALIGN.CENTER
+    _bu_none(par)
+    r = par.add_run()
+    r.text = cap
+    r.font.size = Pt(11)
+    r.font.color.rgb = RGBColor.from_string(FLOW_NOTE)
+    set_ea_font(r, EA_FONT)
 
 
 def placeholder_box(slide, idx: int):
