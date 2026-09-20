@@ -685,9 +685,12 @@ def story_image_hint(story: dict, chapter: dict) -> dict:
     who = (story.get("who") or "").strip()
     where = (story.get("where") or "").strip()
     when = (story.get("when") or "").strip()
+    # 章名不能當搜尋關鍵字：「The World Turned Upside Down historical photograph」
+    # 只會搜到這本書本身，搜不到那個場景。抓不到人名就不給英文關鍵字。
+    ch_en = (chapter.get("title_en") or "").lower()
     en_names = [x for x in _LATIN_NAME.findall(who + " " + (story.get("what") or ""))
-                if len(x) >= 4]
-    en = " ".join(dict.fromkeys(en_names[:2])) or (chapter.get("title_en") or "")
+                if len(x) >= 4 and x.lower() not in ch_en]
+    en = " ".join(dict.fromkeys(en_names[:2]))
     zh_who = re.split(r"[（(]", who, 1)[0].strip()
     zh_where = re.split(r"[，,]", where, 1)[0].strip()
     return {
