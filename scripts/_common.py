@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -232,6 +233,88 @@ def estimate_lines(body: list[dict], size_pt: int = 24, style: str | None = None
         per_line = max(per_line, 6)
         lines += max(1, -(-int(visual_len(text) * 100) // int(per_line * 100)))
     return lines
+
+
+# --------------------------------------------------------------------------
+# 卡片式內文的容量模型
+#
+# 06_build_pptx.draw_cards 怎麼畫，這裡就怎麼算，QA 也用同一份——以前 QA 自己
+# 用「24pt placeholder 折 8 行」估，版面早就改成卡片＋自動縮字級了，於是兩邊
+# 對不起來：明明排得好好的頁被判溢排，真正縮到 16pt 的頁反而沒人抓。
+# 改任何一個常數，兩邊一起變。
+# --------------------------------------------------------------------------
+CARD_BOX = (467544, 1628800, 8208144, 4537075)   # 內文 placeholder (left, top, w, h)
+CARD_GAP = 130000                                # 卡片之間的間距
+CARD_H_MAX = 1900000                             # 單張卡最高 2.08 吋，再高卡片裡就只是空白
+CARD_H_MIN = 620000
+CARD_PAD_X = 150000                              # 卡片左右內縮
+CARD_MARKER_W = {"labeled": 1220000, "chain": 700000}   # 標籤／序號佔掉的寬
+CARD_TEXT_RATIO = 0.84                           # 卡片高度裡真正給文字的比例（其餘留白）
+CARD_SIZES = (26, 24, 22, 20, 18, 16)            # 卡片文字由大往小試
+PROSE_SIZES = (28, 26, 24, 22, 20)
+PROSE_INDENT = 420000                            # prose 左側紅線＋留白
+PROSE_TEXT_RATIO = 0.78
+CARD_PER_PAGE = {"prose": 2}                     # 其餘樣式一頁四張，超過自動拆頁
+CARD_PER_PAGE_DEFAULT = 4
+CARD_COMFORT_PT = 20                             # 低於這個字級就算擠，QA 要提醒
+CHARS_PER_LINE_24PT_FULL = 18.0                  # 24pt 中文在滿版寬度約 18 字／行
+REF_WIDTH = 8208144                              # 上一行那個「滿版寬度」
+
+
+def wrapped_lines(text: str, width_emu: int, size_pt: float) -> int:
+    """這段字在指定寬度、指定字級下會折成幾行。"""
+    cpl = max(4.0, CHARS_PER_LINE_24PT_FULL * (width_emu / REF_WIDTH) * (24.0 / size_pt))
+    return max(1, math.ceil(visual_len(text or "") / cpl))
+
+
+def line_height_emu(size_pt: float) -> int:
+    """單行佔的高度（含行距）。12700 EMU = 1pt。"""
+    return int(size_pt * 1.42 * 12700)
+
+
+def fit_pt(texts: list[str], width_emu: int, height_emu: int,
+           sizes: tuple[int, ...]) -> int:
+    """這幾段字疊在一個框裡，由大到小挑第一個塞得下的字級；都塞不下就回最小的。"""
+    for pt in sizes:
+        need = sum(wrapped_lines(x, width_emu, pt) for x in texts) * line_height_emu(pt)
+        if need <= height_emu:
+            return pt
+    return sizes[-1]
+
+
+def card_per_page(style: str | None) -> int:
+    return CARD_PER_PAGE.get(style or "", CARD_PER_PAGE_DEFAULT)
+
+
+def card_fit(items: list[dict], style: str | None, box=CARD_BOX) -> dict:
+    """卡片式內文實際會用的字級，以及最小字級還塞不塞得下。
+
+    回傳 {"size_pt", "inner_w", "avail", "fits"}：
+        size_pt  版面引擎會選的字級（prose 是整段，其餘是每張卡各算一格）
+        fits     False = 連最小字級都爆框，這才是真的溢排
+    """
+    texts = [(b.get("text") or "").strip() for b in (items or [])]
+    texts = [t for t in texts if t]
+    if not texts:
+        return {"size_pt": 0, "inner_w": 0, "avail": 0, "fits": True}
+
+    _, _, width, height = box
+    if style == "prose":
+        inner_w = width - PROSE_INDENT
+        avail = int(height * PROSE_TEXT_RATIO)
+        sizes, measured = PROSE_SIZES, texts          # 段落是疊在同一個框裡
+    else:
+        n = len(texts)
+        card_h = int(max(CARD_H_MIN, min(CARD_H_MAX, (height - CARD_GAP * (n - 1)) / n)))
+        marker = CARD_MARKER_W.get(style or "", CARD_MARKER_W["chain"])
+        inner_w = width - CARD_PAD_X * 2 - marker - 120000
+        avail = int(card_h * CARD_TEXT_RATIO)
+        # 每張卡各佔一格，所以只要最長的那條塞得下，整頁就塞得下
+        sizes, measured = CARD_SIZES, [max(texts, key=visual_len)]
+
+    size_pt = fit_pt(measured, inner_w, avail, sizes)
+    need = sum(wrapped_lines(x, inner_w, sizes[-1]) for x in measured) * line_height_emu(sizes[-1])
+    return {"size_pt": size_pt, "inner_w": inner_w, "avail": avail, "fits": need <= avail}
 
 
 _CONCRETE_RE = re.compile(

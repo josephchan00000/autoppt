@@ -26,9 +26,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    BODY_STYLES, CHAIN_GLYPHS, DECK_JSON, OUTPUT, TEMPLATE, die, ensure_dirs, estimate_lines,
-    format_timecode, info, limits, load_project, load_spec, ok, read_json, safe_filename,
-    step, visual_len, warn, stop,
+    BODY_STYLES, CARD_GAP, CARD_H_MAX, CARD_H_MIN, CARD_MARKER_W, CARD_PAD_X,
+    CARD_SIZES, CARD_TEXT_RATIO, CHAIN_GLYPHS, DECK_JSON, OUTPUT, PROSE_INDENT,
+    PROSE_SIZES, PROSE_TEXT_RATIO, TEMPLATE, card_per_page, die, ensure_dirs,
+    estimate_lines, fit_pt, format_timecode, info, limits, line_height_emu, load_project,
+    load_spec, ok, read_json, safe_filename, step, visual_len, warn, wrapped_lines, stop,
 )
 
 from pptx import Presentation  # noqa: E402
@@ -57,10 +59,7 @@ FLOW_NOTE = "6B6B6B"
 
 CARD_FILL = "F4F1EA"                   # 卡片底：比 FLOW_FILL 再淡一階，文字才讀得清楚
 CARD_EDGE = "E0D9CC"                   # 卡片描邊
-CARD_GAP = 130000                      # 卡片之間的間距（EMU）
-CARD_H_MAX = 1700000                   # 單張卡片最高 1.86 吋：再高就只是空白
-CARD_H_MIN = 620000
-CHARS_PER_LINE_24PT_FULL = 18.0        # 24pt 中文於 VIS_WIDTH 寬度約 18 字／行
+# 幾何與字級階梯在 _common 的「卡片式內文的容量模型」，QA 用同一份，不要在這裡複製
 
 
 # ==========================================================================
@@ -199,27 +198,6 @@ def set_ph_styled(slide, idx: int, body: list[dict], style: str, size_pt: int,
     return ph
 
 
-def wrapped_lines(text: str, width_emu: int, size_pt: float) -> int:
-    """這段字在指定寬度、指定字級下會折成幾行。"""
-    cpl = max(4.0, CHARS_PER_LINE_24PT_FULL * (width_emu / VIS_WIDTH) * (24.0 / size_pt))
-    return max(1, math.ceil(visual_len(text or "") / cpl))
-
-
-def line_height_emu(size_pt: float) -> int:
-    """單行佔的高度（含行距）。12700 EMU = 1pt。"""
-    return int(size_pt * 1.42 * 12700)
-
-
-def fit_pt(texts: list[str], width_emu: int, height_emu: int,
-           sizes: tuple[int, ...]) -> int:
-    """由大到小挑第一個塞得下的字級；全都塞不下就回最小的。"""
-    for pt in sizes:
-        need = sum(wrapped_lines(x, width_emu, pt) for x in texts) * line_height_emu(pt)
-        if need <= height_emu:
-            return pt
-    return sizes[-1]
-
-
 def _card_text(slide, left, top, w, h, text, size_pt, color=FLOW_TEXT,
                name="CardText", align=PP_ALIGN.LEFT):
     tb = slide.shapes.add_textbox(Emu(int(left)), Emu(int(top)), Emu(int(w)), Emu(int(h)))
@@ -339,8 +317,8 @@ def draw_cards(slide, items: list[dict], style: str,
 
     if style == "prose":
         paras = [b["text"].strip() for b in items]
-        inner_w = width - 420000
-        size_pt = fit_pt(paras, inner_w, int(height * 0.78), (28, 26, 24, 22, 20))
+        inner_w = width - PROSE_INDENT
+        size_pt = fit_pt(paras, inner_w, int(height * PROSE_TEXT_RATIO), PROSE_SIZES)
         need = sum(wrapped_lines(x, inner_w, size_pt) for x in paras) * line_height_emu(size_pt)
         need += 200000 * (len(paras) - 1)
         block_h = min(height, need + 120000)
@@ -378,12 +356,14 @@ def draw_cards(slide, items: list[dict], style: str,
     stack_h = card_h * n + CARD_GAP * (n - 1)
     y0 = top + max(0, (height - stack_h) // 2)
 
-    pad_x = 150000
-    marker_w = 1220000 if style == "labeled" else 700000
+    pad_x = CARD_PAD_X
+    marker_w = CARD_MARKER_W["labeled"] if style == "labeled" else CARD_MARKER_W["chain"]
     text_left = left + pad_x + marker_w + 120000
     text_w = width - pad_x * 2 - marker_w - 120000
-    size_pt = fit_pt([b["text"].strip() for b in items], text_w,
-                     int(card_h * 0.74), (26, 24, 22, 20, 18, 16))
+    # 每條各自一張卡，所以只要最長的那條在單張卡裡塞得下就好；
+    # 把四條的行數加總去比一張卡的高度，會讓每一頁都掉到最小字級。
+    longest = max((b["text"].strip() for b in items), key=visual_len)
+    size_pt = fit_pt([longest], text_w, int(card_h * CARD_TEXT_RATIO), CARD_SIZES)
 
     for i, it in enumerate(items):
         cy = y0 + i * (card_h + CARD_GAP)
@@ -1396,7 +1376,7 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
         if style:
             # 卡片式自己算字級與高度，這裡只負責「一頁放幾張」：
             # prose 兩段、chain/labeled 四張，超過就拆下一頁。
-            per_page = 2 if style == "prose" else 4
+            per_page = card_per_page(style)
             cur, rest = (rest or [])[:per_page], (rest or [])[per_page:] or None
             size_pt = 0
         else:

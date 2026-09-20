@@ -42,7 +42,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    BODY_STYLES, DECK_JSON, DIGEST, EVIDENCE, OUTPUT, TEMPLATE, _c, body_item_text, ensure_dirs,
+    BODY_STYLES, CARD_COMFORT_PT, DECK_JSON, DIGEST, EVIDENCE, OUTPUT, TEMPLATE, _c,
+    body_item_text, card_fit, card_per_page, ensure_dirs,
     estimate_lines, format_timecode, has_concrete, have_cmd, info, is_appendix, limits,
     load_project, load_spec, narration_chars, ok, read_json, soffice_bin, step,
     talk_minutes_range, talk_slides, target_slides, visual_len, warn,
@@ -261,9 +262,19 @@ def check_overflow(deck: dict) -> Result:
         if kind == "divider" and visual_len(title) > t_max:
             r.warn(f"{sid} 頁籤 {visual_len(title):.0f} 字 > {t_max}，44pt 會折成三行")
 
-        lines = estimate_lines(body, 24, style)
-        if lines > max_lines:
-            r.fail(f"{sid} 內文估算 {lines} 行 > {max_lines}（24pt）")
+        if style and kind == "content":
+            # 卡片式：字級由版面引擎自己縮，所以問的不是「幾行」而是
+            # 「最小字級還塞不塞得下」「縮到幾點還讀得舒服」。與引擎同一份算法。
+            fit = card_fit(body[:card_per_page(style)], style)
+            if not fit["fits"]:
+                r.fail(f"{sid} 卡片連 {fit['size_pt']}pt 都塞不下，要砍字或拆頁")
+            elif fit["size_pt"] < CARD_COMFORT_PT:
+                r.warn(f"{sid} 卡片縮到 {fit['size_pt']}pt（舒服的下限 {CARD_COMFORT_PT}pt），"
+                       "字再短一點會好看很多")
+        else:
+            lines = estimate_lines(body, 24, style)
+            if lines > max_lines:
+                r.fail(f"{sid} 內文估算 {lines} 行 > {max_lines}（24pt）")
 
         total = sum(visual_len(body_item_text(style, b, i)) for i, b in enumerate(body))
         if total > b_max:
@@ -281,6 +292,10 @@ def check_overflow(deck: dict) -> Result:
         if kind == "content" and style != "prose":
             l1 = [b for b in body if int(b.get("level", 0)) == 0]
             blo, bhi = lim.get("bullets_l1_range", [2, 3])
+            # chain 是大綱頁，prompts/guide.md 寫的就是「大綱 2–4 步」，
+            # 上限跟著版面引擎一頁放得下的張數走，不要拿 labeled 的門檻去卡它
+            if style == "chain":
+                bhi = max(bhi, card_per_page(style))
             if l1 and not (blo <= len(l1) <= bhi):
                 r.warn(f"{sid} 要點 {len(l1)} 條，建議 {blo}–{bhi} 條")
     if r.status == "PASS":
@@ -943,10 +958,12 @@ def check_ai_tone(deck: dict) -> Result:
         if n_colon >= 3:
             colon_pages.append(sid)
 
-        blob = " ".join(texts) + " " + (s.get("title") or "") + " " + (s.get("subtitle") or "")
-        words = {w.lower() for w in _LATIN_WORD.findall(blob) if len(w) > 1}
-        if len(words) > 2:
-            latin_pages.append(f"{sid}（{len(words)} 個）")
+        # 作者頁的人名、書名、獎項本來就是英文，不列入夾雜檢查
+        if s.get("role") != "author":
+            blob = " ".join(texts) + " " + (s.get("title") or "") + " " + (s.get("subtitle") or "")
+            words = {w.lower() for w in _LATIN_WORD.findall(blob) if len(w) > 1}
+            if len(words) > 2:
+                latin_pages.append(f"{sid}（{len(words)} 個）")
 
         if len(texts) >= 3:
             lens = sorted(visual_len(x) for x in texts)
