@@ -238,7 +238,8 @@ def check_overflow(deck: dict) -> Result:
     l1_max = int(lim.get("bullet_l1_max_chars", 40))
     max_lv = int(lim.get("max_outline_level", 1))
 
-    r = Result("溢排", f"內文 ≤{max_lines} 行；主標 ≤{t_max} 字"
+    r = Result("溢排", f"卡片頁看最小字級塞不塞得下（縮到 {CARD_COMFORT_PT}pt 以下 WARN）；"
+                       f"其餘內文 ≤{max_lines} 行；主標 ≤{t_max} 字"
                        f"（空白內頁的視覺頁 ≤{ct_max}）；副標 ≤{s_max} 字")
     for s in slides_of(deck):
         sid, kind = s.get("id"), s.get("kind")
