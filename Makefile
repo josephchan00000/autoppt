@@ -12,6 +12,7 @@
 #   make build    Stage 6+7 產 PPTX + 逐字稿 DOCX
 #   make qa       Stage 8   自動品管
 #   make images   匯出圖片建議清單 output/圖片建議.md
+#   make photos   到 Wikimedia Commons 抓章名頁籤的候選照片（要能上網）
 #   make revise   改稿迴圈：改完 deck.json 後重跑 6→8
 #   make deliver  產出 + 圖片建議 + 品管，一次跑完交付前的最後三步
 # ===========================================================================
@@ -22,7 +23,7 @@ BOOK    ?= $(firstword $(wildcard input/book.* input/*.pdf input/*.epub input/*.
 
 .DEFAULT_GOAL := help
 .PHONY: help next setup check extract split digest research guide outline build pptx script qa \
-        images deliver revise preview check-sources clean-work clean-output distclean
+        images photos deliver revise preview check-sources clean-work clean-output distclean
 
 help:
 	@grep -E '^#   make' Makefile | sed 's/^#   /  /'
@@ -93,6 +94,10 @@ preview:
 
 images:
 	$(PY) tools/image_suggestions.py
+
+# 要能對外連線：雲端的 egress 白名單會擋掉 Commons，請在自己的電腦跑
+photos:
+	$(PY) tools/fetch_story_photos.py
 
 # 改稿迴圈：改完 work/05_deck.json 之後跑這個，不要重跑前面的階段
 revise: build qa

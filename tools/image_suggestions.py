@@ -29,13 +29,23 @@ from _common import (  # noqa: E402
 
 HEADER = """# 圖片建議清單
 
-這份是「該去搜什麼圖」，不是圖檔本身。抓回來之後放進投影片，
-把章名頁籤上那個虛線佔位框刪掉即可。
+章名頁籤右側**現在已經有東西**：一張畫出來的「場景卡」（大字年份＋人物＋地點），
+不是空白也不是虛線框，直接上台也不會看起來沒做完。這份清單是給你**換成真照片**用的。
 
-**授權要自己確認**：Wikimedia Commons 要看每張圖的授權標示；
-機構官網的圖多半只能引用不能改；圖庫（Unsplash、Pexels）可商用但要看條款。
+換照片有兩條路：
 
-| 頁 | 頁面 | 要拍到什麼 | 中文關鍵字 | 英文關鍵字 | 去哪找 |
+- **自動**（要能上網）：`make photos` 會到 Wikimedia Commons 依下表關鍵字抓候選圖，
+  放進 `work/09_photos/_candidates/<頁面 id>/`，附一份 `授權.md` 寫明授權與作者。
+  挑一張複製成 `work/09_photos/<頁面 id>.jpg`，再跑 `make revise`，
+  場景卡就會自動換成那張照片。
+- **手動**：自己找圖，一樣存成 `work/09_photos/<頁面 id>.jpg` 再 `make revise`；
+  或直接在 PowerPoint 裡把場景卡刪掉、貼上圖片。
+
+**授權要自己確認**：Wikimedia Commons 要看每張圖的授權標示（公有領域才可以隨便用，
+CC BY 要標作者，CC BY-SA 要以相同方式分享）；機構官網的圖多半只能引用不能改；
+圖庫（Unsplash、Pexels）可商用但要看條款。
+
+| 頁 | id | 頁面 | 要拍到什麼 | 中文關鍵字 | 英文關鍵字 |
 |---|---|---|---|---|---|
 """
 
@@ -63,17 +73,18 @@ def rows(deck: dict) -> list[dict]:
 def write_md(items: list[dict], path: Path) -> None:
     lines = [HEADER]
     for r in items:
-        lines.append(f"| {r['page']} | {r['title']} | {r['what']} | {r['zh']} | "
-                     f"{r['en']} | {r['source']} |\n")
+        lines.append(f"| {r['page']} | `{r['id']}` | {r['title']} | {r['what']} | "
+                     f"{r['zh']} | {r['en'] or '—'} |\n")
     lines.append("\n## 逐頁說明\n\n")
     for r in items:
-        lines.append(f"### 第 {r['page']} 頁　{r['title']}\n\n")
+        lines.append(f"### 第 {r['page']} 頁　{r['title']}　（`{r['id']}`）\n\n")
         lines.append(f"- **要拍到什麼**：{r['what']}\n")
         lines.append(f"- **中文關鍵字**：`{r['zh']}`\n")
         if r["en"]:
             lines.append(f"- **英文關鍵字**：`{r['en']}`\n")
         lines.append(f"- **去哪找**：{r['source']}\n")
-        lines.append(f"- **放哪裡**：{r['use']}\n\n")
+        lines.append(f"- **放哪裡**：{r['use']}\n")
+        lines.append(f"- **換上去**：存成 `work/09_photos/{r['id']}.jpg` 再跑 `make revise`\n\n")
     path.write_text("".join(lines), encoding="utf-8")
 
 
@@ -127,7 +138,8 @@ def main() -> int:
     ok(f"{len(items)} 筆 → {md}")
     if args.docx and write_docx(items, OUTPUT / "圖片建議.docx"):
         ok(f"Word → {OUTPUT / '圖片建議.docx'}")
-    info("抓回來之後放進投影片，把章名頁籤上的虛線佔位框刪掉")
+    info("章名頁籤現在畫的是場景卡；要換成照片就跑 make photos（要能上網），"
+         "或自己把圖存成 work/09_photos/<頁面 id>.jpg 再 make revise")
     return 0
 
 

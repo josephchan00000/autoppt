@@ -167,6 +167,14 @@ python scripts/07_build_script.py
 python tools/image_suggestions.py    # → output/圖片建議.md
 python scripts/08_qa.py --all
 ```
+**要補真照片**（選配，章名頁籤預設已經有場景卡，不補也交得出去）：
+```bash
+python tools/fetch_story_photos.py   # 抓候選圖到 work/09_photos/_candidates/<id>/，附授權.md
+# 挑一張 → 複製成 work/09_photos/<頁面 id>.jpg → make revise
+```
+**這支要能對外連線**。雲端 session 會直接失敗（`Tunnel connection failed: 403`），
+那不是錯誤，是 egress 白名單；叫使用者在自己的電腦跑同一行。
+授權一定要他自己看過，不要替他判斷可不可以用。
 或一次做完：`make deliver`（build + images + qa）。
 
 任何一項 FAIL 就不准交付。WARN 不擋，但要唸給使用者聽。
@@ -189,8 +197,11 @@ python scripts/08_qa.py --all
   兩欄取高者、整體垂直置中。
 - **中英之間不要打空格**：`tidy_deck()` 會自動刪掉。PowerPoint 本來就會補視覺間距，
   再打一個就變兩倍寬的縫。
-- **章名頁籤右側會放一個虛線圖片佔位框**，內容是該章故事的搜尋關鍵字
-  （`image_hint`，由 `05_outline.py` 從故事自動產生）。使用者換成自己找的圖就好。
+- **章名頁籤右側會畫一張「場景卡」**：大字年份＋人物＋地點，取自該章故事的
+  `image_hint`（由 `05_outline.py` 自動產生）。這不是佔位符，是成品——直接上台也不空。
+  故事本身不上投影片（故事進逐字稿），卡片只把時空標出來。
+  **使用者把照片放成 `work/09_photos/<頁面 id>.jpg` 就會自動換成照片**，
+  裁切填滿同一個框。`make photos` 會去 Wikimedia Commons 抓候選圖附授權（要能上網）。
 - **視覺頁的版面歸屬**：`image` / `table` / `split` 走**內頁2-1**（上限 14 / 21 字）；
   `flow` / `timeline` / `quote` / `stat` / 自畫 `chart` 走**空白內頁**（上限 20 / 30）。
 
@@ -256,5 +267,8 @@ python scripts/08_qa.py --all
 - 不要編造 URL 或數據；作者頁每一句都要有來源
 - 不要動不動就用 matplotlib 畫圖（先讀 prompts/visuals.md 的優先序）
 - 不要只交 PPTX：PDF、逐字稿、圖片建議、QA 報告一起給
+- 不要在雲端硬抓圖：Commons 與機構網站都被 egress 白名單擋掉，
+  章名頁籤畫場景卡就好，照片讓使用者在自己的電腦用 `make photos` 補
+- 不要替使用者判斷圖片授權可不可以用：把授權原文列給他，他自己決定
 - 不要用 `yaml.safe_dump` 覆寫 project.yaml（會洗掉註解）
 - 不要重跑已經完成的階段

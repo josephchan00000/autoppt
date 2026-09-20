@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
     BODY_STYLES, CARD_GAP, CARD_H_MAX, CARD_H_MIN, CARD_MARKER_W, CARD_PAD_X,
     CARD_SIZES, CARD_TEXT_RATIO, CHAIN_GLYPHS, DECK_JSON, OUTPUT, PROSE_INDENT,
-    PROSE_SIZES, PROSE_TEXT_RATIO, TEMPLATE, card_per_page, die, ensure_dirs,
+    PROSE_SIZES, PROSE_TEXT_RATIO, TEMPLATE, WORK, card_per_page, die, ensure_dirs,
     estimate_lines, fit_pt, format_timecode, info, limits, line_height_emu, load_project,
     load_spec, ok, read_json, safe_filename, step, visual_len, warn, wrapped_lines, stop,
 )
@@ -248,46 +248,159 @@ def tidy_deck(node):
 IMG_SLOT = (5990000, 2010000, 2520000, 2750000)   # 章名頁籤右側的直式空白區（EMU）
 
 
-def draw_image_slot(slide, hint: dict) -> None:
-    """在章名頁籤右側畫一個虛線佔位框，裡面寫「該去搜什麼圖」。
+PHOTOS = WORK / "09_photos"          # 使用者自己找到的照片：<頁面 id>.jpg / .png
+_YEAR = r"(?:1[0-9]{3}|20[0-9]{2})"
+_YEAR_ONLY = re.compile(rf"^({_YEAR})\s*年?$")
+# 「年代」不能拆：1890 年代是一個詞，挑掉 1890 只會剩「代至 1930」
+_YEAR_HEAD = re.compile(rf"^({_YEAR})\s*年(?!代)\s*(.+)$")
+_YEAR_SPAN = re.compile(rf"^({_YEAR}\s*[–—\-~]\s*{_YEAR})$")
 
-    使用者拿到檔案之後把框刪掉、換成自己找到的圖就好；
-    完整清單另外出在 output/圖片建議.md（tools/image_suggestions.py）。
+
+def split_when(when: str) -> tuple[str, int, str]:
+    """把「什麼時候」拆成（大字, 字級, 小字）。
+
+    「1866 年 5 月 10 日」→（1866, 40,「5 月 10 日」）
+    「2013–2018」→（2013–2018, 28, ""）
+    「1890 年代至 1930」→ 挑不出乾淨的年份（挑掉 1890 會剩「代至 1930」），整句當一行
+    """
+    when = (when or "").strip()
+    if not when:
+        return "", 0, ""
+    m = _YEAR_ONLY.match(when)
+    if m:
+        return m.group(1), 40, ""
+    m = _YEAR_HEAD.match(when)
+    if m:
+        return m.group(1), 40, m.group(2).strip()
+    m = _YEAR_SPAN.match(when)
+    if m:
+        return m.group(1).replace(" ", ""), 28, ""
+    return when, 16, ""
+
+
+def story_photo(slide_id: str) -> Path | None:
+    """work/09_photos/<頁面 id>.(jpg|jpeg|png|webp) 有圖就用圖，沒有就畫場景卡。"""
+    if not slide_id:
+        return None
+    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+        f = PHOTOS / f"{slide_id}{ext}"
+        if f.exists():
+            return f
+    return None
+
+
+def place_story_photo(slide, png: Path) -> None:
+    """把照片等比裁切填滿章名頁籤右側的直式區塊。"""
+    from PIL import Image
+
+    left, top, w, h = IMG_SLOT
+    with Image.open(png) as im:
+        iw, ih = im.size
+    # 以「填滿」為準：短邊貼齊，長邊溢出的部分用 crop 切掉
+    scale = max(w / iw, h / ih)
+    dw, dh = int(iw * scale), int(ih * scale)
+    pic = slide.shapes.add_picture(str(png), Emu(left), Emu(top), Emu(dw), Emu(dh))
+    pic.name = "StoryPhoto"
+    pic.crop_left = pic.crop_right = max(0.0, (dw - w) / dw / 2)
+    pic.crop_top = pic.crop_bottom = max(0.0, (dh - h) / dh / 2)
+    pic.left, pic.top, pic.width, pic.height = Emu(left), Emu(top), Emu(w), Emu(h)
+
+
+def draw_story_card(slide, hint: dict) -> None:
+    """章名頁籤右側的「場景卡」：年份、人物、地點。
+
+    這裡本來是一個空的虛線框，寫著「該去搜什麼圖」——交出去的檔案看起來就沒做完。
+    改成直接畫一張卡：大字年份 ＋ 人物 ＋ 地點，那是待會兒口頭要講的那個故事的場景。
+    故事本身不上投影片（CLAUDE.md：故事進逐字稿），卡片只負責把時空標出來。
+
+    使用者之後找到照片，放成 work/09_photos/<頁面 id>.jpg 就會自動換成照片。
     """
     if not hint:
         return
     left, top, w, h = IMG_SLOT
-    box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(left), Emu(top), Emu(w), Emu(h))
-    box.name = "ImageSlot"
-    box.fill.solid()
-    box.fill.fore_color.rgb = RGBColor.from_string("FFFFFF")
-    box.line.color.rgb = RGBColor.from_string("BFBFBF")
-    box.line.width = Pt(1)
-    box.line.dash_style = MSO_LINE.DASH
-    box.shadow.inherit = False
-    tf = box.text_frame
-    tf.word_wrap = True
-    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-    tf.margin_left = tf.margin_right = Emu(120000)
-    lines = [("【這裡放一張圖】", 13, FLOW_LINE, True),
-             (hint.get("what", ""), 12, FLOW_TEXT, False),
-             ("搜尋　" + (hint.get("keywords_zh") or ""), 11, FLOW_NOTE, False)]
-    if hint.get("keywords_en"):
-        lines.append((hint["keywords_en"], 11, FLOW_NOTE, False))
-    if hint.get("source"):
-        lines.append((hint["source"], 9, FLOW_NOTE, False))
-    for i, (txt, sz, col, bold) in enumerate(lines):
-        par = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+    who = (hint.get("who") or "").strip()
+    where = (hint.get("where") or "").strip()
+    when = (hint.get("when") or "").strip()
+    year, year_pt, rest = split_when(when)
+
+    card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Emu(left), Emu(top), Emu(w), Emu(h))
+    card.name = "StoryCard"
+    card.fill.solid()
+    card.fill.fore_color.rgb = RGBColor.from_string("FFFFFF")
+    card.line.color.rgb = RGBColor.from_string(CARD_EDGE)
+    card.line.width = Pt(1)
+    card.shadow.inherit = False
+
+    band = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(left + 120000), Emu(top + 200000),
+                                  Emu(w - 240000), Emu(50800))
+    band.name = "StoryRule"
+    band.fill.solid()
+    band.fill.fore_color.rgb = RGBColor.from_string(FLOW_LINE)
+    band.line.fill.background()
+    band.shadow.inherit = False
+
+    def tx(y, height, text, size, color, bold=False, name="StoryText"):
+        tb = slide.shapes.add_textbox(Emu(left + 110000), Emu(y), Emu(w - 220000), Emu(height))
+        tb.name = name
+        tf = tb.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = tf.margin_right = Emu(0)
+        tf.margin_top = tf.margin_bottom = Emu(0)
+        par = tf.paragraphs[0]
         par.alignment = PP_ALIGN.CENTER
         _bu_none(par)
-        if i == 0:
-            par.space_after = Pt(6)
         r = par.add_run()
-        r.text = txt
-        r.font.size = Pt(sz)
+        r.text = text
+        r.font.size = Pt(size)
         r.font.bold = bold
-        r.font.color.rgb = RGBColor.from_string(col)
+        r.font.color.rgb = RGBColor.from_string(color)
         set_ea_font(r, EA_FONT)
+
+    # 由上而下配預算：年份與人物先取，地點用剩下的空間，所以不會溢出卡片；
+    # 最後整疊垂直置中，卡片裡不會上面擠、下面空一塊。
+    inner_w = w - 220000
+    gap = 150000
+    # 紅線在 top+200000，卡片下緣留 160000
+    area_top, area_bot = top + 380000, top + h - 160000
+    budget = area_bot - area_top
+
+    def row(txt, sizes, color, bold, name, cap):
+        """排一列，回傳 (文字, 字級, 顏色, 粗體, 名稱, 高度)；cap 是這一列最多能佔多高。"""
+        pt = sizes[0] if len(sizes) == 1 else fit_pt([txt], inner_w, cap, sizes)
+        hh = int(wrapped_lines(txt, inner_w, pt) * line_height_emu(pt) * 1.08)
+        return (txt, pt, color, bold, name, min(hh, cap))
+
+    rows = []
+    if year:
+        rows.append(row(year, (year_pt,) if year_pt >= 28 else (16, 14, 12),
+                        FLOW_LINE, True, "StoryYear", int(budget * 0.45)))
+    if rest:
+        rows.append(row(rest, (12,), FLOW_NOTE, False, "StoryText", int(budget * 0.2)))
+    used = sum(r[5] for r in rows) + gap * len(rows)
+    if who:
+        rows.append(row(who, (20, 18, 16, 14), FLOW_TEXT, True, "StoryWho",
+                        max(300000, int((budget - used) * 0.62))))
+        used = sum(r[5] for r in rows) + gap * len(rows)
+    if where:
+        rows.append(row(where, (13, 12, 11, 10, 9), FLOW_NOTE, False, "StoryText",
+                        max(260000, budget - used)))
+    if not rows:
+        return
+    block = sum(r[5] for r in rows) + gap * (len(rows) - 1)
+    y = area_top + max(0, (budget - block) // 2)
+    for txt, sz, col, bold, name, hh in rows:
+        tx(y, hh, txt, sz, col, bold, name)
+        y += hh + gap
+
+
+def _divider_visual(slide, spec: dict) -> None:
+    """章名頁籤右側：使用者放了照片就用照片，沒有就畫場景卡。"""
+    photo = story_photo(spec.get("id", ""))
+    if photo:
+        place_story_photo(slide, photo)
+    else:
+        draw_story_card(slide, spec.get("image_hint") or {})
 
 
 def placeholder_box(slide, idx: int):
@@ -1231,7 +1344,7 @@ def build_one(prs, spec: dict, meta: dict) -> dict:
             r.font.color.rgb = RGBColor.from_string("939396")
             set_ea_font(r, EA_FONT)
         if spec.get("image_hint"):
-            draw_image_slot(s, spec["image_hint"])
+            _divider_visual(s, spec)
         remove_empty_placeholders(s)
         set_notes(s, narration)
         return {"count": 1, "split": 0, "charts": 0}

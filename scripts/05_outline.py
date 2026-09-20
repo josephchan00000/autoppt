@@ -699,6 +699,11 @@ def story_image_hint(story: dict, chapter: dict) -> dict:
         "keywords_en": (f"{en} historical photograph" if en else "").strip(),
         "source": "Wikimedia Commons（先看授權）／機構官網／圖書館數位典藏",
         "use": "章名頁籤右側，開場講故事時的背景圖",
+        # 拆開來的欄位給版面引擎畫「場景卡」用：沒有照片的時候，
+        # 章名頁籤右邊放的是年份／人物／地點，不是一個空的虛線框。
+        "who": zh_who,
+        "where": zh_where or where,
+        "when": when,
     }
 
 
